@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from .base import JobSource
 from ..models import Job
-from ..utils import fingerprint
+from ..utils import fingerprint, is_safe_http_url
 
 class ManualLinksSource(JobSource):
     name = "manual"
@@ -17,6 +17,8 @@ class ManualLinksSource(JobSource):
         for line in self.file_path.read_text(encoding="utf-8").splitlines():
             u=line.strip()
             if not u or u.startswith("#"):
+                continue
+            if not is_safe_http_url(u):
                 continue
             out.append(Job(
                 source=self.name,

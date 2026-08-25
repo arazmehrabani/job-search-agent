@@ -11,7 +11,7 @@ from .sources.lever import LeverSource
 from .sources.smartrecruiters import SmartRecruitersSource
 from .sources.manual import ManualLinksSource
 from .sources.email_alert_files import EmailAlertFilesSource
-from .pagecheck import check_and_enrich
+from .pagecheck import PageChecker
 from .filters import hard_filter, age_days, heuristic_score
 from .ai import AIEngine
 from .documents import generate_package
@@ -28,7 +28,7 @@ from .cv_sources import select_cv_source
 from .evidence import load_evidence_registry, retrieve_evidence, evidence_by_ids
 from .priority import calculate_priority
 from .feedback import family_feedback_adjustments, write_feedback_summary
-from .utils import canonical_url, source_identity
+from .utils import canonical_url, source_identity, is_safe_http_url
 
 
 def load_profile(path: str) -> dict:
@@ -76,7 +76,9 @@ def _evaluate_job(job, profile, context, cfg, ai, registry, screen_count: int, d
         return ai.heuristic_match(job, profile, context, screen_ids), screen_count, deep_count
 
     if not enabled:
-        deep_evidence = retrieve_evidence(job, registry, limit=deep_limit, career_family=context["career_family"])
+        lexical = retrieve_evidence(job, registry, limit=deep_limit, career_family=context["career_family"])
+        semantic_ids = ai.select_evidence(job, profile, registry, context, lexical, limit=deep_limit)
+        deep_evidence = evidence_by_ids(semantic_ids, registry) or lexical
         return ai.match(job, profile, deep_evidence, context=context, base_score=base), screen_count, deep_count + 1
 
     screen_min = int(tiered.get("screen_min_pre_score", 40))
@@ -108,7 +110,13 @@ def _evaluate_job(job, profile, context, cfg, ai, registry, screen_count: int, d
         m.decision_reasons.append("Deep AI budget for this cycle was exhausted; job will be retried on a later run.")
         return m, screen_count, deep_count
 
-    deep_evidence = retrieve_evidence(job, registry, limit=deep_limit, career_family=context["career_family"])
+    lexical_deep = retrieve_evidence(job, registry, limit=deep_limit, career_family=context["career_family"])
+    semantic_enabled = bool(cfg.get("evidence", {}).get("semantic_selection", {}).get("enabled", True))
+    if semantic_enabled:
+        semantic_ids = ai.select_evidence(job, profile, registry, context, lexical_deep, limit=deep_limit)
+        deep_evidence = evidence_by_ids(semantic_ids, registry) or lexical_deep
+    else:
+        deep_evidence = lexical_deep
     match = ai.match(job, profile, deep_evidence, context=context, base_score=base, screen_data=screen)
     deep_count += 1
     return match, screen_count, deep_count
@@ -137,6 +145,7 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
     locations = cfg.get("search", {}).get("locations", []) or [""]
     limit = int(cfg.get("search", {}).get("results_per_source", 25))
     verify = bool(cfg.get("search", {}).get("verify_live_page", True))
+    page_checker = PageChecker(cfg) if verify else None
     min_score = int(cfg.get("preferences", {}).get("minimum_match_score", 63))
     package_priority = int(cfg.get("priority", {}).get("package_generation_min", 74))
     immediate_priority = int(cfg.get("notifications", {}).get("immediate_priority_min", 82))
@@ -156,6 +165,9 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
 
     seen, unique = set(), []
     for job in found:
+        if not is_safe_http_url(job.url):
+            errors.append(f"{job.source}: rejected unsafe/non-HTTP job URL: {job.url}")
+            continue
         key = canonical_url(job.url) or source_identity(job)
         if key in seen:
             continue
@@ -167,7 +179,7 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
     parse_failures = []
     for job in unique:
         if verify:
-            active, job = check_and_enrich(job)
+            active, job = page_checker.check_and_enrich(job)
         else:
             active = "unknown"
         bad_title = not job.title or job.title.strip().lower() in {"job", "unknown job", "careers", "job details"}
@@ -205,6 +217,10 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
             "career_family_label": family_label,
             "career_tier": tier,
             "career_family_signal": family_signal,
+            "career_family_options": [
+                {"id": k, "label": str(v.get("label", k)), "tier": str(v.get("tier", "adjacent"))}
+                for k, v in (scope.get("families", {}) or {}).items()
+            ],
             "source_cv": source_cv.key if source_cv else "",
         }
         base = heuristic_score(job, profile, cfg)
@@ -230,7 +246,7 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
         match = _match_from_json(state.get("match_json"))
         # Deep AI and HOLD/SKIP screens are cached. Cheap heuristic rows are refreshed
         # so parser fixes/new Codex availability can upgrade them automatically.
-        should_refresh = match is None or match.source == "heuristic"
+        should_refresh = match is None or match.source == "heuristic" or match.analysis_version != "1.6"
         if should_refresh:
             match, screened, deep_evaluated = _evaluate_job(
                 job, profile, context, cfg, ai, registry, screened, deep_evaluated
@@ -273,13 +289,23 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
         user_decision = str(state.get("user_decision", "") or "").upper()
         app_status = state.get("application_status")
         deep_match = match.source in {"codex_cli", "openai_api"}
+        legacy_package_needs_audit = False
+        if state.get("has_application", False) and state.get("package_dir"):
+            audit_required = bool(cfg.get("evidence", {}).get("semantic_audit", {}).get("required_for_ready", True))
+            if audit_required:
+                try:
+                    status_path = Path(str(state.get("package_dir"))) / "package_status.json"
+                    pdata = json.loads(status_path.read_text(encoding="utf-8")) if status_path.exists() else {}
+                    legacy_package_needs_audit = not bool(pdata.get("semantic_evidence_audit_ok"))
+                except Exception:
+                    legacy_package_needs_audit = True
         should_generate = (
             deep_match
             and match.priority_score >= package_priority
             and active != "expired"
             and user_decision not in {"SKIP", "NOT_INTERESTED"}
             and not dry_run
-            and (not state.get("has_application", False) or (app_status == "needs_ai_or_review" and ai.enabled))
+            and (not state.get("has_application", False) or (app_status == "needs_ai_or_review" and ai.enabled) or legacy_package_needs_audit)
         )
         if should_generate:
             doc_evidence = _document_evidence(job, match, registry, cfg)

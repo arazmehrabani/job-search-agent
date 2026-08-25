@@ -1,9 +1,9 @@
 # %% [markdown]
-# JOB SEARCH AGENT V1.5.1 — VS CODE / CONDA RUNNER
+# JOB SEARCH AGENT V1.6 — VS CODE / CONDA RUNNER
 #
 # Select the Conda interpreter named `agent`, then run cells with Shift+Enter.
-# V1.5 adds evidence traceability, Fit vs Priority, feedback learning, tiered AI,
-# usage telemetry and an optional interactive dashboard server.
+# V1.6 adds polite/cached page checks, semantic evidence selection, claim-vs-evidence auditing,
+# safer dashboard feedback handling, Fit vs Priority, feedback learning and tiered AI.
 
 # %% SETUP — Shift+Enter
 from __future__ import annotations
@@ -42,7 +42,7 @@ def run_once(dry_run: bool = False):
     db = Database(DB_FILE)
     try:
         backend = AIEngine(cfg).backend_name()
-        print(f"\n=== Job Agent V1.5.1 | AI backend: {backend} | dry_run={dry_run} ===")
+        print(f"\n=== Job Agent V1.6 | AI backend: {backend} | dry_run={dry_run} ===")
         result = run_pipeline(cfg, db, dry_run=dry_run)
         dashboard = build_dashboard(db)
         digest = build_digest(db, min_priority=int(cfg.get("notifications", {}).get("digest_priority_min", 68)))
@@ -102,6 +102,9 @@ for src in configured_cv_sources(cfg): print("  -", src.key, "->", src.path)
 print("Tiered AI:", cfg.get("ai", {}).get("tiered", {}))
 print("Priority thresholds:", cfg.get("priority", {}))
 print("Feedback learning:", cfg.get("feedback", {}))
+print("HTTP policy:", cfg.get("http", {}))
+print("Semantic evidence selection:", cfg.get("evidence", {}).get("semantic_selection", {}))
+print("Semantic claim audit:", cfg.get("evidence", {}).get("semantic_audit", {}))
 
 # %% PREVIEW SEARCH QUERIES — Shift+Enter
 profile = json.loads(Path(cfg["documents"]["profile"]).read_text(encoding="utf-8"))

@@ -124,7 +124,35 @@ def generate_package(job:Job,match:MatchResult,profile:dict,cfg:dict,ai:AIEngine
     (pkg/"cv_evidence_trace.json").write_text(json.dumps({"evidence_ids":cited,"claim_trace":claim_trace},ensure_ascii=False,indent=2),encoding="utf-8")
     letter=ai.cover_letter(job,profile,match,target_language,evidence_records=evidence_for_job)
     if ai.last_cover_error:result["notes"].append(f"Cover-letter generation failed: {ai.last_cover_error}")
-    (pkg/f"CoverLetter_{file_tag}.txt").write_text(letter,encoding="utf-8");cover_ids=list(ai.last_cover_evidence_ids or []);result["cv_evidence_ids"]=cited;result["cover_letter_evidence_ids"]=cover_ids;(pkg/"cover_letter_evidence.json").write_text(json.dumps({"evidence_ids":cover_ids},indent=2),encoding="utf-8")
+    (pkg/f"CoverLetter_{file_tag}.txt").write_text(letter,encoding="utf-8")
+    cover_ids=list(ai.last_cover_evidence_ids or [])
+    cover_trace=list(ai.last_cover_trace or [])
+    result["cv_evidence_ids"]=cited
+    result["cover_letter_evidence_ids"]=cover_ids
+    (pkg/"cover_letter_evidence.json").write_text(json.dumps({"evidence_ids":cover_ids,"claim_trace":cover_trace},ensure_ascii=False,indent=2),encoding="utf-8")
+
+    audit_cfg=(cfg.get("evidence",{}).get("semantic_audit",{}) or {})
+    audit_enabled=bool(audit_cfg.get("enabled",True))
+    audit_required=bool(audit_cfg.get("required_for_ready",True))
+    audit_claims=[]
+    for item in claim_trace:
+        audit_claims.append({"document":"cv","claim":item.get("claim",""),"evidence_ids":item.get("evidence_ids",[])})
+    for item in cover_trace:
+        audit_claims.append({"document":"cover_letter","claim":item.get("claim",""),"evidence_ids":item.get("evidence_ids",[])})
+    if audit_enabled:
+        audit_result=ai.audit_claims(audit_claims,evidence_for_job)
+    else:
+        audit_result={"ok":True,"audited":0,"unsupported":[],"reason":"Semantic audit disabled by config."}
+    result["semantic_evidence_audit_ok"]=bool(audit_result.get("ok"))
+    result["semantic_evidence_audit_count"]=int(audit_result.get("audited",0) or 0)
+    (pkg/"semantic_evidence_audit.json").write_text(json.dumps(audit_result,ensure_ascii=False,indent=2),encoding="utf-8")
+    if audit_enabled and not audit_result.get("ok"):
+        unsupported=audit_result.get("unsupported",[]) or []
+        if unsupported:
+            result["notes"].append(f"Semantic evidence audit found {len(unsupported)} unsupported/overstated claim(s); package requires review.")
+        else:
+            result["notes"].append(str(audit_result.get("reason","Semantic evidence audit did not pass.")))
+
     lpath=pkg/f"CoverLetter_{file_tag}.tex";lpath.write_text(letter_to_tex(letter,profile,job,target_language),encoding="utf-8")
     if not ai.enabled:result["notes"].append("AI/Codex is unavailable: package is not application-ready because genuine tailoring/translation was not performed.")
     if dcfg.get("compile_pdf",True):
@@ -138,5 +166,13 @@ def generate_package(job:Job,match:MatchResult,profile:dict,cfg:dict,ai:AIEngine
     compile_required=bool(dcfg.get("compile_pdf",True));require_trace=bool(cfg.get("evidence",{}).get("require_traceability_for_ready",True));trace_ok=bool(cited and cover_ids) if require_trace else True
     if require_trace and not cited:result["notes"].append("CV tailoring has no valid internal evidence-ID citations; package requires review.")
     if require_trace and not cover_ids:result["notes"].append("Cover letter has no valid evidence-ID trace; package requires review.")
-    generation_ok=bool(ai.enabled and not ai.last_tailor_error and not ai.last_cover_error and cv_language_ok and not letter.startswith("[AI/Codex") and trace_ok);result["ready"]=bool(generation_ok and (not compile_required or (result["cv_pdf"] and result["cover_pdf"])))
+    if audit_required and (not claim_trace or not cover_trace):
+        trace_ok=False
+        if not claim_trace:result["notes"].append("CV has no material claim trace for semantic auditing; package requires review.")
+        if not cover_trace:result["notes"].append("Cover letter has no material claim trace for semantic auditing; package requires review.")
+    audit_ok=(not audit_required) or bool(result.get("semantic_evidence_audit_ok"))
+    generation_ok=bool(ai.enabled and not ai.last_tailor_error and not ai.last_cover_error and cv_language_ok and not letter.startswith("[AI/Codex") and trace_ok and audit_ok)
+    if audit_required and not audit_ok:
+        result["notes"].append("Semantic claim-vs-evidence audit is required for READY status and did not pass.")
+    result["ready"]=bool(generation_ok and (not compile_required or (result["cv_pdf"] and result["cover_pdf"])))
     (pkg/"package_status.json").write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8");return pkg,result

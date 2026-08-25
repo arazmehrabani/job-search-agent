@@ -3,6 +3,7 @@ import html
 import json
 from pathlib import Path
 from .db import Database
+from .utils import safe_http_url
 
 
 def _match_meta(raw: str | None) -> dict:
@@ -22,7 +23,7 @@ def _score_class(v: int) -> str:
     return "score-high" if v >= 82 else ("score-mid" if v >= 68 else "score-low")
 
 
-def build_dashboard(db: Database, output="output/dashboard.html"):
+def build_dashboard(db: Database, output="output/dashboard.html", feedback_token: str = ""):
     rows = db.top_jobs(300)
     stats = db.stats()
     usage = db.usage_stats(1)
@@ -31,7 +32,8 @@ def build_dashboard(db: Database, output="output/dashboard.html"):
 
     for r in rows:
         fp = _esc(r["fingerprint"])
-        url = _esc(r["url"] or "")
+        raw_url = safe_http_url(str(r["url"] or ""))
+        url = _esc(raw_url)
         title, title_full = _clip(r["title"], 95)
         company, company_full = _clip(r["company"], 46)
         loc, loc_full = _clip(r["location"], 33)
@@ -67,6 +69,11 @@ def build_dashboard(db: Database, output="output/dashboard.html"):
         ev_ids = [_esc(x) for x in (m.get("evidence_ids", []) or [])]
         preasons = [_esc(x) for x in (m.get("priority_reasons", []) or [])]
         agent_action = _esc(str(m.get("decision", "") or ""))
+        ai_family = _esc(str(m.get("ai_career_family", "") or ""))
+        ai_secondary = _esc(str(m.get("ai_secondary_career_family", "") or ""))
+        family_conf = float(m.get("career_family_confidence", 0) or 0)
+        contextual_de = _esc(str(m.get("contextual_german_importance", "") or ""))
+        contextual_de_reason = _esc(str(m.get("contextual_german_reason", "") or ""))
 
         details_parts = []
         if any((tech, exp, language_fit, edu)):
@@ -76,6 +83,8 @@ def build_dashboard(db: Database, output="output/dashboard.html"):
         if risks: details_parts.append("<div><b>Risks:</b> " + ", ".join(risks[:5]) + "</div>")
         if agent_action: details_parts.append("<div><b>Agent action:</b> " + agent_action + "</div>")
         if preasons: details_parts.append("<div><b>Priority:</b> " + ", ".join(preasons[:5]) + "</div>")
+        if ai_family: details_parts.append(f"<div><b>AI family check:</b> {ai_family}" + (f" ({family_conf:.0%})" if family_conf else "") + (f"; secondary {ai_secondary}" if ai_secondary else "") + "</div>")
+        if contextual_de: details_parts.append(f"<div><b>Contextual German:</b> {contextual_de}" + (f" — {contextual_de_reason}" if contextual_de_reason else "") + "</div>")
         if ev_ids: details_parts.append("<div><b>Evidence:</b> " + ", ".join(ev_ids[:12]) + "</div>")
         if reasoning: details_parts.append("<div class='reason'>" + reasoning + "</div>")
         details = "<details><summary>analysis</summary>" + "".join(details_parts) + "</details>" if details_parts else ""
@@ -90,10 +99,11 @@ def build_dashboard(db: Database, output="output/dashboard.html"):
 
         fit_html = "—" if fit is None else f"<span class='scorebadge {_score_class(fit)}'>{fit}</span><small>{source_kind}</small>"
         pri_html = "—" if priority is None else f"<span class='scorebadge {_score_class(priority)}'>{priority}</span><small>{plabel}</small>"
+        role_link = f"<a href='{url}' rel='noopener noreferrer' title='{title_full}'>{title}</a>" if raw_url else f"<span title='{title_full}'>{title}</span>"
         trs.append(
             "<tr>"
             f"<td class='scorecell'>{fit_html}</td><td class='scorecell'>{pri_html}</td>"
-            f"<td class='role'><a href='{url}' title='{title_full}'>{title}</a>{details}</td>"
+            f"<td class='role'>{role_link}{details}</td>"
             f"<td class='company' title='{company_full}'>{company}</td><td class='location' title='{loc_full}'>{loc}</td>"
             f"<td>{lang}</td><td>{employment_html}</td><td>{_esc(german_req)}</td>"
             f"<td class='career' title='{family_full}'>{family}<div class='sub'>{_esc(tier)}</div></td>"
@@ -123,7 +133,7 @@ a{{color:var(--link);text-decoration:none;font-weight:650}} a:hover{{text-decora
 details{{margin-top:6px;color:var(--muted);font-size:10.5px}} summary{{cursor:pointer;color:#536170}} .fitgrid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:3px 10px;margin:5px 0}} .reason{{margin-top:4px;line-height:1.35}}
 .decision-current{{font-weight:700;font-size:11px}} .decision-buttons{{display:flex;gap:3px;margin-top:5px;flex-wrap:wrap}} .decision-buttons button{{border:1px solid #d6dbe1;background:#fff;border-radius:5px;padding:3px 5px;font-size:9px;cursor:pointer}} .decision-buttons button:hover{{background:#f0f4f8}} .decision-buttons.disabled button{{opacity:.35;cursor:not-allowed}} .outcome{{display:inline-block;margin:0;font-size:9px}} .outcome summary{{display:inline;cursor:pointer;color:#68707a}} .outcome button{{margin-top:3px}}
 tr:hover td{{background:#fbfcfd}} @media(max-width:900px){{.shell{{padding:13px}}}}
-</style></head><body><div class="shell"><h1>Job Search Agent V1.5</h1>
+</style></head><body><div class="shell"><h1>Job Search Agent V1.6</h1>
 <p class="note"><b>Fit</b> = evidence match. <b>Priority</b> = whether the opportunity is worth your attention after language, freshness, career tier and feedback. PRE = local heuristic, SCREEN = compact AI screening, AI = deep Codex/API match. Feedback buttons work when opened through <code>python agent.py serve</code>.</p>
 <div class="cards">
 <div class="card"><b>Total</b><div class="n">{stats.get('total',0)}</div></div><div class="card"><b>Active</b><div class="n">{stats.get('active',0) or 0}</div></div>
@@ -135,10 +145,11 @@ tr:hover td{{background:#fbfcfd}} @media(max-width:900px){{.shell{{padding:13px}
 <p class="note" style="margin-top:10px">*API cost is shown only if you explicitly configured current per-million-token rates. Codex/ChatGPT plan calls show approximate token volume, not a dollar billing amount.</p>
 </div>
 <script>
+const feedbackToken = "__FEEDBACK_TOKEN__";
 async function sendFeedback(fp, decision){{
   if(location.protocol==='file:'){{alert('Feedback is read-only in file:// mode. Run: python agent.py serve');return;}}
   let reason=''; if(['SKIP','REJECTED'].includes(decision)) reason=prompt('Optional reason:','')||'';
-  const r=await fetch('/api/feedback',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{fingerprint:fp,decision:decision,reason:reason}})}});
+  const r=await fetch('/api/feedback',{{method:'POST',headers:{{'Content-Type':'application/json','X-Job-Agent-Token':feedbackToken}},body:JSON.stringify({{fingerprint:fp,decision:decision,reason:reason}})}});
   if(!r.ok){{alert('Could not save feedback');return;}} location.reload();
 }}
 document.querySelectorAll('.decision-buttons').forEach(g=>{{
@@ -146,4 +157,5 @@ document.querySelectorAll('.decision-buttons').forEach(g=>{{
   g.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>sendFeedback(g.dataset.fp,b.dataset.d)));
 }});
 </script></body></html>"""
+    page = page.replace("__FEEDBACK_TOKEN__", _esc(feedback_token or ""))
     p = Path(output); p.parent.mkdir(parents=True, exist_ok=True); p.write_text(page, encoding="utf-8"); return p

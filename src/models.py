@@ -46,6 +46,7 @@ class MatchResult:
     risks: list[str] = field(default_factory=list)
     reasoning: str = ""
     source: str = "heuristic"
+    analysis_version: str = ""
     screen_score: int = 0
     screen_decision: str = ""
 
@@ -70,6 +71,15 @@ class MatchResult:
     experience_fit: int = 0
     language_fit: int = 0
     education_fit: int = 0
+
+    # V1.6 semantic correction/QA signals. Heuristic classifications remain available
+    # as the primary cheap layer; deep AI can add a contextual second opinion.
+    ai_career_family: str = ""
+    ai_secondary_career_family: str = ""
+    career_family_confidence: float = 0.0
+    contextual_german_importance: str = ""
+    contextual_german_mandatory: str = ""
+    contextual_german_reason: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)

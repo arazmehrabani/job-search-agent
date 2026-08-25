@@ -4,7 +4,7 @@ import sqlite3
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from .models import Job, MatchResult
-from .utils import job_fingerprint, canonical_url
+from .utils import job_fingerprint, canonical_url, is_safe_http_url, safe_http_url
 
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS jobs (
@@ -52,6 +52,10 @@ class Database:
         self.telemetry_config = (cfg or {}).get('telemetry', {}) or {}
 
     def upsert_job(self, job: Job) -> str:
+        if not is_safe_http_url(job.url):
+            raise ValueError(f"Unsafe/non-HTTP job URL rejected: {job.url}")
+        job.url = safe_http_url(job.url)
+        job.apply_url = safe_http_url(job.apply_url) if job.apply_url else ""
         fp = job_fingerprint(job)
         now = datetime.now(timezone.utc).isoformat()
         existing = self.conn.execute('SELECT fingerprint FROM jobs WHERE fingerprint=?', (fp,)).fetchone()
@@ -107,6 +111,9 @@ class Database:
                 removed += 1
         self.conn.commit()
         return removed
+
+    def job_exists(self, fp: str) -> bool:
+        return bool(self.conn.execute('SELECT 1 FROM jobs WHERE fingerprint=? LIMIT 1', (str(fp),)).fetchone())
 
     def get_job_state(self, fp: str):
         row = self.conn.execute(

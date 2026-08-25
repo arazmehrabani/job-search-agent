@@ -37,6 +37,22 @@ search:
   max_age_days: 7
   results_per_source: 25
   verify_live_page: true
+http:
+  # Polite live-page verification for arbitrary career pages (official source APIs are separate).
+  min_delay_per_host_seconds: 1.5
+  delay_jitter_seconds: 0.25
+  max_retries: 2
+  retry_backoff_seconds: 2.0
+  max_retry_after_seconds: 60
+  timeout_seconds: 20
+  page_cache_minutes: 120
+  cache_file: output/http_cache.json
+  respect_robots_txt: true
+  robots_fail_open: true
+  robots_cache_hours: 12
+  max_cached_body_chars: 750000
+  robots_user_agent: JobSearchAgent
+
 preferences:
   required_title_keywords: []
   excluded_title_keywords:
@@ -276,6 +292,11 @@ evidence:
   max_items_per_job: 16
   document_evidence_limit: 18
   require_traceability_for_ready: true
+  semantic_selection:
+    enabled: true
+  semantic_audit:
+    enabled: true
+    required_for_ready: true
 priority:
   high_min: 82
   review_min: 68

@@ -49,7 +49,7 @@ def _estimate_tokens(text: str) -> int:
 class AIEngine:
     """AI layer with explicit provider selection and usage telemetry.
 
-    V1.5 intentionally does NOT silently switch to paid OpenAI API usage. The default
+    V1.6 intentionally does NOT silently switch to paid OpenAI API usage. The default
     config requests Codex CLI. OpenAI API is only used when provider=openai_api.
     """
 
@@ -68,6 +68,7 @@ class AIEngine:
         self.last_cover_error = ""
         self.last_tailor_trace: dict = {}
         self.last_cover_evidence_ids: list[str] = []
+        self.last_cover_trace: list[dict] = []
 
         api_available = bool(os.getenv("OPENAI_API_KEY"))
         codex_available = bool(self.codex_executable)
@@ -185,6 +186,7 @@ class AIEngine:
             decision_reasons=["Local capability-based pre-score; no deep AI assessment yet."],
             reasoning="Local capability-based heuristic. AI/Codex matching was unavailable or skipped.",
             source="heuristic",
+            analysis_version="1.6",
             transferability="Local score includes transferable engineering capability and career-family signals.",
             evidence_ids=list(evidence_ids or []),
             **defaults,
@@ -242,6 +244,96 @@ PROMOTE means a deep evaluation is worthwhile. HOLD means interesting but probab
         except Exception as exc:
             return {"error": str(exc), "screen_score": int(base_score), "decision": "HOLD", "evidence_ids": []}
 
+    def select_evidence(
+        self,
+        job: Job,
+        profile: dict,
+        all_evidence: list[dict],
+        context: dict,
+        lexical_records: list[dict],
+        limit: int = 16,
+    ) -> list[str]:
+        """Semantic second-pass evidence selection for jobs promoted to deep analysis."""
+        if not self.enabled or not all_evidence:
+            return [str(x.get("id")) for x in lexical_records if x.get("id")][:limit]
+        instructions = """You select verified evidence for a deep engineering job-fit analysis. Return JSON only.
+Choose evidence by MEANING, not only exact keyword overlap. Use only IDs supplied in verified_evidence_catalog.
+Prefer direct evidence, but include defensible transferable evidence when the job uses different wording.
+Do not infer a stronger fact than an evidence claim states. Return {"evidence_ids":[...],"reason":"short"}."""
+        lexical_ids = [str(x.get("id")) for x in lexical_records if x.get("id")]
+        payload = {
+            "job": {"title": job.title, "company": job.company, "description": (job.description or "")[:8000]},
+            "job_context": context,
+            "candidate_profile_summary": {"languages": profile.get("languages", {}), "education": profile.get("education", [])},
+            "lexical_evidence_ids": lexical_ids,
+            "verified_evidence_catalog": evidence_payload(all_evidence),
+            "max_evidence_ids": int(limit),
+        }
+        try:
+            data = extract_json(self._text_call(instructions, payload, operation="evidence_semantic_selection"))
+            valid = {str(e.get("id")) for e in all_evidence if e.get("id")}
+            selected = []
+            for x in data.get("evidence_ids", []) or []:
+                x = str(x)
+                if x in valid and x not in selected:
+                    selected.append(x)
+                if len(selected) >= limit:
+                    break
+            for x in lexical_ids:
+                if x in valid and x not in selected and len(selected) < limit:
+                    selected.append(x)
+            return selected
+        except Exception:
+            return lexical_ids[:limit]
+
+    def audit_claims(self, claims: list[dict], evidence_records: list[dict]) -> dict:
+        """Semantically verify generated claims against their cited evidence objects."""
+        if not claims:
+            return {"ok": False, "audited": 0, "unsupported": [], "reason": "No material claim trace was supplied."}
+        valid = {str(e.get("id")): e for e in evidence_records if e.get("id")}
+        clean_claims = []
+        for item in claims:
+            if not isinstance(item, dict):
+                continue
+            claim = str(item.get("claim", "")).strip()
+            ids = [str(x) for x in (item.get("evidence_ids", []) or []) if str(x) in valid]
+            if claim:
+                clean_claims.append({"claim": claim, "evidence_ids": ids})
+        if not self.enabled:
+            return {"ok": False, "audited": len(clean_claims), "unsupported": [], "reason": "AI backend unavailable for semantic evidence audit."}
+        instructions = """You are an evidence-entailment auditor for application documents. Return JSON only.
+For each generated claim, decide whether the cited VERIFIED EVIDENCE directly supports the wording and strength.
+Be strict about responsibility verbs and scope: 'assisted/supported' does NOT justify 'led/owned/managed'; separate facts do NOT justify invented coupling; academic work is not professional experience unless stated.
+A claim may be paraphrased, but it must not add responsibility, scale, outcome, causality, seniority, chronology, tool integration, or proficiency not supported by the cited evidence.
+Return {"results":[{"claim":"...","supported":true|false,"severity":"none|minor|major","reason":"...","suggested_revision":"..."}],"overall_ok":true|false}.
+Any unsupported major claim makes overall_ok false."""
+        payload = {
+            "claims": clean_claims,
+            "verified_evidence": evidence_payload(evidence_records),
+        }
+        try:
+            data = extract_json(self._text_call(instructions, payload, operation="claim_evidence_audit"))
+            results = []
+            unsupported = []
+            for item in data.get("results", []) or []:
+                if not isinstance(item, dict):
+                    continue
+                row = {
+                    "claim": str(item.get("claim", "")),
+                    "supported": bool(item.get("supported", False)),
+                    "severity": str(item.get("severity", "major" if not item.get("supported") else "none")).lower(),
+                    "reason": str(item.get("reason", "")),
+                    "suggested_revision": str(item.get("suggested_revision", "")),
+                }
+                results.append(row)
+                if not row["supported"]:
+                    unsupported.append(row)
+            major = [x for x in unsupported if x.get("severity") == "major"]
+            overall = bool(data.get("overall_ok", not major)) and not major
+            return {"ok": overall, "audited": len(results), "results": results, "unsupported": unsupported}
+        except Exception as exc:
+            return {"ok": False, "audited": 0, "unsupported": [], "reason": f"Semantic evidence audit failed: {exc}"}
+
     def match(
         self,
         job: Job,
@@ -278,6 +370,12 @@ PROMOTE means a deep evaluation is worthwhile. HOLD means interesting but probab
             "requirement_evidence": [{"requirement": "...", "status": "strong|partial|missing", "evidence_ids": ["..."]}],
             "transferability": "short explanation",
             "reasoning": "short explanation",
+            "ai_career_family": "best-fit known family ID or empty",
+            "ai_secondary_career_family": "second-best known family ID or empty",
+            "career_family_confidence": "number 0-1",
+            "contextual_german_importance": "mandatory|likely_important|preferred|not_important|unclear",
+            "contextual_german_mandatory": "yes|no|unclear",
+            "contextual_german_reason": "short contextual explanation",
         }
         instructions = """You are a conservative but broad-minded job-fit evaluator for an engineering candidate.
 Return JSON only. Never invent facts. VERIFIED EVIDENCE OBJECTS are the factual boundary for claims.
@@ -287,7 +385,8 @@ For every important claimed match, cite one or more supplied evidence IDs in req
 Never combine two evidence objects into a stronger claim that neither supports (for example do not invent coupled simulation work).
 German is B1/actively learning unless evidence explicitly says otherwise. Stronger German requirements must lower language_fit and appear as a risk, while engineering fit stays separate.
 Full-time professional positions are primary targets as well as student/thesis roles.
-The score is FIT, not application priority; practical priority is calculated separately by deterministic code."""
+The score is FIT, not application priority; practical priority is calculated separately by deterministic code.
+Also provide a semantic second opinion on career family and German-language importance. Treat these as contextual corrections to the cheap heuristic layer, not permission to invent explicit requirements."""
         payload = {
             "candidate_profile": profile,
             "verified_evidence": evidence_payload(evidence_records),
@@ -341,8 +440,15 @@ The score is FIT, not application priority; practical priority is calculated sep
             transferability=str(data.get("transferability", "")),
             reasoning=str(data.get("reasoning", "")),
             source=self.provider,
+            analysis_version="1.6",
             screen_score=int((screen_data or {}).get("screen_score", 0) or 0),
             screen_decision=str((screen_data or {}).get("decision", "")),
+            ai_career_family=str(data.get("ai_career_family", "") or ""),
+            ai_secondary_career_family=str(data.get("ai_secondary_career_family", "") or ""),
+            career_family_confidence=max(0.0, min(1.0, float(data.get("career_family_confidence", 0) or 0))),
+            contextual_german_importance=str(data.get("contextual_german_importance", "") or ""),
+            contextual_german_mandatory=str(data.get("contextual_german_mandatory", "") or ""),
+            contextual_german_reason=str(data.get("contextual_german_reason", "") or ""),
             **defaults,
         )
 
@@ -361,6 +467,7 @@ The score is FIT, not application priority; practical priority is calculated sep
             missing_required=list(screen.get("mandatory_gaps", []) or []),
             reasoning=str(screen.get("reason", "Compact AI screen; deep evaluation not promoted.")),
             source="ai_screen",
+            analysis_version="1.6",
             screen_score=screen_score,
             screen_decision=decision,
             evidence_ids=[x for x in (screen.get("evidence_ids", []) or []) if x in set(ids)] or ids[:8],
@@ -472,17 +579,18 @@ Target employment type: {employment_type}. Career family: {career_family_label}.
     ) -> str:
         self.last_cover_error = ""
         self.last_cover_evidence_ids = []
+        self.last_cover_trace = []
         language_name = "German" if target_language == "de" else "English"
         if not self.enabled:
             self.last_cover_error = "AI/Codex backend unavailable"
             return "[AI/Codex required: tailored cover letter has not been generated.]"
         instructions = f"""Write a concise professional cover letter in {language_name} for this exact job.
-Return JSON only with keys: letter, evidence_ids_used.
+Return JSON only with keys: letter, evidence_ids_used, claim_trace.
 The letter should be about 180-280 words and ready to send after personal placeholders are restored.
 Use only the supplied VERIFIED EVIDENCE OBJECTS, match analysis and profile. Never invent experience.
 Explain 2-3 concrete evidence-to-requirement links. Do not frame the candidate as only seeking a thesis unless the vacancy is a thesis. For full-time roles write as a full-time application while truthfully retaining current M.Sc. status.
 If German is requested, never claim proficiency above B1/actively learning. If stronger German is required, stay positive but truthful. Avoid generic flattery and keyword stuffing.
-Every material experience claim in the letter must be supported by at least one ID in evidence_ids_used."""
+Every material experience claim in the letter must be supported by at least one ID in evidence_ids_used. claim_trace must list each material generated/reworded claim with its supporting evidence_ids."""
         evidence = evidence_payload(evidence_records or [])
         valid_ids = {str(e.get("id")) for e in evidence_records or [] if e.get("id")}
         payload = {
@@ -502,9 +610,18 @@ Every material experience claim in the letter must be supported by at least one 
                 self.last_cover_evidence_ids = [
                     str(x) for x in (data.get("evidence_ids_used", []) or []) if str(x) in valid_ids
                 ]
+                trace = []
+                for item in data.get("claim_trace", []) or []:
+                    if not isinstance(item, dict):
+                        continue
+                    claim = str(item.get("claim", "")).strip()
+                    ids = [str(x) for x in (item.get("evidence_ids", []) or []) if str(x) in valid_ids]
+                    if claim:
+                        trace.append({"claim": claim, "evidence_ids": ids})
+                self.last_cover_trace = trace
                 return letter
             # Backwards-compatible fallback: text is usable for review but cannot pass
-            # the V1.5 evidence-trace readiness gate.
+            # the V1.6 evidence-trace readiness gate.
             return raw
         except Exception as exc:
             self.last_cover_error = str(exc)

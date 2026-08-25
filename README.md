@@ -1,57 +1,308 @@
-# Job Search Agent V1.5
+# Job Search Agent V1.6
 
-V1.5 turns the project from a job-finding/document generator into a more explicit **job-search decision system**.
+V1.6 keeps the V1.5 decision-system architecture and adds the reliability/safety upgrades identified in the latest review: polite page fetching, stronger dashboard input validation, semantic evidence retrieval, and a final semantic claim-vs-evidence audit before an application package can be marked READY.
 
-It keeps the V1.4.2 parser fixes, bilingual multi-CV workflow, freshness rules, LaTeX compilation, local database, VS Code runner and continuous watch mode. The main changes are **verified evidence IDs, Fit vs Application Priority, feedback learning, tiered AI calls, safe Codex-first provider selection, usage telemetry, priority-based notifications and a stronger health check**.
-
-## What V1.5 adds
-
-### 1. Verified evidence registry
-
-The factual CV boundary is now also represented in:
+The design principle remains:
 
 ```text
-input/evidence/evidence.json
+SEARCH BROADLY
+      ↓
+EVALUATE STRICTLY
+      ↓
+WRITE TRUTHFULLY
 ```
 
-It contains verified evidence objects such as:
+## What V1.6 changes
 
-```json
-{
-  "id": "EXP_CAE_002",
-  "claim": "Performed modal and harmonic-response analyses in ANSYS...",
-  "source": ["mechanical_en", "mechanical_de", "wind_en"],
-  "verified": true
-}
+### 1. Polite live-page checking
+
+Generic career-page verification now uses one shared HTTP policy per run:
+
+```yaml
+http:
+  min_delay_per_host_seconds: 1.5
+  delay_jitter_seconds: 0.25
+  max_retries: 2
+  retry_backoff_seconds: 2.0
+  max_retry_after_seconds: 60
+  page_cache_minutes: 120
+  cache_file: output/http_cache.json
+  respect_robots_txt: true
+  robots_fail_open: true
+  robots_cache_hours: 12
 ```
 
-The agent retrieves only the evidence relevant to each vacancy instead of sending every CV in full to every AI call. Deep AI matching returns evidence IDs for important claims. Generated application folders also contain `evidence_sources.json` and `claim_trace.json`.
+This means multiple jobs on the same company site are not fetched back-to-back with no delay. HTTP 429/5xx responses use bounded retry/backoff, `Retry-After` is respected, and recently checked pages can be reused from the local cache.
 
-This makes it harder for the model to accidentally combine unrelated facts into a stronger unsupported claim.
+`robots.txt` is checked and cached for arbitrary page fetching. An explicit disallow becomes `robots_disallowed`, not `expired`.
 
-### 2. Fit is not Priority
+### 2. Safer local dashboard feedback endpoint
 
-The dashboard now has two scores:
+`python agent.py serve` still binds only to:
 
-- **Fit**: how well your verified evidence satisfies the vacancy.
-- **Priority**: how strongly you should consider applying after language requirements, freshness, career tier, mandatory gaps, location/employment compatibility and your own previous feedback.
+```text
+http://127.0.0.1:8765/
+```
+
+V1.6 additionally uses a random session token for feedback writes and validates:
+
+- `Content-Type: application/json`
+- body size (max 8 KiB)
+- 24-character job fingerprint
+- allowed decision values
+- reason type/length
+- that the target job actually exists
+
+The browser dashboard automatically sends the token. You do not need to manage it.
+
+### 3. HTTP/HTTPS-only job links
+
+Vacancy URLs must use `http://` or `https://`.
+
+Schemes such as:
+
+```text
+javascript:
+file:
+data:
+ftp:
+```
+
+are rejected at ingestion or rendered as non-clickable text if corrupted legacy data somehow reaches the dashboard.
+
+### 4. Hybrid evidence retrieval
+
+V1.5 used lexical/token overlap to retrieve evidence. V1.6 keeps that cheap first pass, then—only for jobs promoted to deep AI analysis—asks Codex/API for a semantic second pass across the verified evidence registry.
+
+```text
+Job
+ ↓
+lexical evidence retrieval (Python)
+ ↓
+AI semantic evidence selection (deep candidates only)
+ ↓
+verified evidence subset
+ ↓
+deep fit analysis
+```
+
+This helps with differently worded requirements such as `eigen-behaviour / oscillatory response` versus evidence tagged `modal / harmonic / vibration / resonance`.
+
+### 5. Semantic claim-vs-evidence audit
+
+A real evidence ID is no longer enough by itself.
 
 Example:
 
 ```text
-Fit:      90
-Priority: 76 REVIEW
+Evidence:
+"Supported manufacturing and assembly..."
 
-Reason:
-- strong technical evidence
-- fluent German requested, candidate is B1
+Generated claim:
+"Led manufacturing and assembly..."
 ```
 
-A high technical fit therefore does not hide a practical risk.
+V1.6 performs a final AI entailment audit and should flag the stronger verb as unsupported/overstated.
 
-### 3. Human feedback + learning
+Each generated package now contains:
 
-You can store:
+```text
+cv_evidence_trace.json
+cover_letter_evidence.json
+semantic_evidence_audit.json
+```
+
+By default:
+
+```yaml
+evidence:
+  require_traceability_for_ready: true
+  semantic_selection:
+    enabled: true
+  semantic_audit:
+    enabled: true
+    required_for_ready: true
+```
+
+A package cannot become `package_ready` if the semantic audit fails, if the audit itself fails, or if the CV/cover letter lacks a material claim trace.
+
+### 6. Career-family and German heuristics remain cheap—but AI can correct context
+
+Python still performs fast first-pass detection for:
+
+- career family
+- job language
+- employment type
+- German requirement
+
+Deep AI analysis now additionally stores:
+
+```text
+AI career-family second opinion
+secondary family
+confidence
+contextual German importance
+contextual German mandatory/unclear flag
+contextual German reason
+```
+
+The dashboard shows these under **analysis**. Contextual German importance affects Priority only softly; it does not invent an explicit B2/C1 requirement that the posting never stated.
+
+## Fit vs Priority
+
+V1.6 keeps the V1.5 distinction:
+
+- **Fit** = how well verified evidence satisfies the vacancy.
+- **Priority** = how strongly the opportunity deserves attention after language, mandatory gaps, career tier, freshness, employment fit and feedback.
+
+A job can therefore be:
+
+```text
+Fit:      90
+Priority: 75 REVIEW
+```
+
+if technical fit is excellent but fluent German is a serious practical risk.
+
+## AI pipeline
+
+AI is deliberately not used for every task.
+
+```text
+Sources
+ ↓
+Python parsing / dedupe / freshness / active check
+ ↓
+Python PRE score
+ ↓
+compact AI SCREEN for promising jobs
+ ↓
+semantic evidence selection for promoted jobs
+ ↓
+deep AI FIT analysis
+ ↓
+Python Priority rules
+ ↓
+CV + cover letter for worthwhile jobs
+ ↓
+semantic claim/evidence audit
+ ↓
+LaTeX/PDF + dashboard + notification
+```
+
+Default AI provider remains:
+
+```yaml
+ai:
+  provider: codex_cli
+```
+
+Having an `OPENAI_API_KEY` does **not** silently switch the agent to paid API usage. To intentionally use API billing, set `provider: openai_api`.
+
+## Installation / first run
+
+Use your existing Conda environment:
+
+```powershell
+conda activate agent
+cd C:\Users\YOUR_USER\Desktop\job_search_agent_v1_6
+pip install -r requirements.txt
+python agent.py doctor
+```
+
+For a network check:
+
+```powershell
+python agent.py doctor --network
+```
+
+The doctor now also checks the configured host throttling, robots policy, page cache and semantic evidence/audit settings.
+
+## Codex check
+
+In the same VS Code terminal:
+
+```powershell
+codex --version
+codex exec "Reply only with CODEX_WORKS"
+```
+
+Then run the **CHECK SETUP** cell in `vscode_runner.py`.
+
+You want:
+
+```text
+Requested AI provider: codex_cli
+Active AI backend: codex_cli
+```
+
+If Codex is not found, set an explicit Windows path in `config.yaml`, for example:
+
+```yaml
+ai:
+  provider: codex_cli
+  codex_path: "C:/Users/YOUR_USER/AppData/Roaming/npm/codex.cmd"
+```
+
+## VS Code / Shift+Enter workflow
+
+Open:
+
+```text
+vscode_runner.py
+```
+
+Then use:
+
+```python
+# test search/matching only
+result = run_once(dry_run=True)
+
+# generate eligible application packages
+result = run_once(dry_run=False)
+
+# continuous mode
+watch(interval_minutes=30, dry_run=False)
+```
+
+For feedback buttons:
+
+```python
+serve_dashboard(DB_FILE, port=8765, open_browser=True)
+```
+
+or from PowerShell:
+
+```powershell
+python agent.py serve
+```
+
+## Package contents
+
+A generated application folder can include:
+
+```text
+job.json
+job_description.txt
+match.json
+evidence_sources.json
+evidence_retrieved.json
+cv_evidence_trace.json
+cover_letter_evidence.json
+semantic_evidence_audit.json
+CV_<company>_<role>_<lang>.tex
+CV_<company>_<role>_<lang>.pdf
+CoverLetter_<company>_<role>_<lang>.txt
+CoverLetter_<company>_<role>_<lang>.tex
+CoverLetter_<company>_<role>_<lang>.pdf
+package_status.json
+```
+
+If `semantic_evidence_audit_ok` is false, the package is kept for review but is not marked READY.
+
+## Feedback / learning
+
+The interactive dashboard and command line support:
 
 ```text
 APPLY
@@ -63,326 +314,17 @@ REJECTED
 OFFER
 ```
 
-The agent records the decision in SQLite and writes:
-
-```text
-output/feedback_summary.json
-```
-
-After enough decisions in one career family, V1.5 can make a small bounded adjustment to **Priority**. It does not rewrite the underlying Fit score.
-
-The adjustment is deliberately capped in `config.yaml`.
-
-### 4. Interactive local dashboard
-
-The normal static dashboard still works:
-
-```text
-output/dashboard.html
-```
-
-For working feedback buttons, start the local dashboard server:
+Example:
 
 ```powershell
-python agent.py serve
+python agent.py feedback "6328" SAVE --reason "Strong technical fit; German is a stretch"
 ```
 
-It opens:
+Feedback can make a small bounded adjustment to future **Priority** in the same career family. It does not change the underlying Fit score.
 
-```text
-http://127.0.0.1:8765/
-```
+## Migration from V1.5.1
 
-The dashboard has **Apply / Save / Skip** buttons.
-
-You can also record feedback from the command line:
-
-```powershell
-python agent.py feedback "6328" SAVE --reason "Strong fit, German is a stretch"
-```
-
-or using an exact job URL:
-
-```powershell
-python agent.py feedback "https://example.com/job" APPLY
-```
-
-In VS Code you can use:
-
-```python
-save_feedback("6328", "SAVE", "Strong fit; language risk")
-```
-
-### 5. Tiered AI usage
-
-V1.5 no longer treats every discovered vacancy as equally worthy of a full AI call.
-
-Default flow:
-
-```text
-many discovered jobs
-        ↓
-hard filters + parser verification
-        ↓
-local heuristic PRE score
-        ↓
-compact AI SCREEN (only promising jobs)
-        ↓
-deep AI match (smaller shortlist)
-        ↓
-CV + cover letter (priority threshold only)
-```
-
-Default limits per run:
-
-```yaml
-ai:
-  tiered:
-    screen_min_pre_score: 40
-    max_screen_per_run: 24
-    deep_min_screen_score: 58
-    deep_force_pre_score: 72
-    max_deep_per_run: 10
-    screen_evidence_limit: 8
-    deep_evidence_limit: 16
-```
-
-Manual URLs are screened even if their local pre-score is low, because an explicitly supplied vacancy deserves evaluation.
-
-### 6. Codex is explicit by default
-
-V1.5 defaults to:
-
-```yaml
-ai:
-  provider: codex_cli
-```
-
-If Codex is unavailable, it falls back to local heuristic ranking.
-
-**It will not silently spend OpenAI API credits merely because an `OPENAI_API_KEY` exists.**
-
-To intentionally use API billing, change:
-
-```yaml
-ai:
-  provider: openai_api
-```
-
-`auto` is also safe in V1.5: it prefers Codex and otherwise uses heuristic mode; it does not silently select the paid API.
-
-### 7. AI usage telemetry
-
-Every AI call records:
-
-- provider
-- model
-- operation (`job_screen`, `job_deep_match`, `cv_tailoring`, etc.)
-- approximate/actual input and output tokens
-- duration
-- success/failure
-- estimated API cost when you explicitly configure current pricing
-
-The dashboard shows today's call/token totals.
-
-For Codex/ChatGPT-plan usage, token counts are estimates based on text size and are **not billing data**.
-
-For OpenAI API cost tracking, enter current pricing yourself in `config.yaml`:
-
-```yaml
-telemetry:
-  openai_input_cost_per_million: null
-  openai_output_cost_per_million: null
-```
-
-The project intentionally does not hard-code potentially outdated prices.
-
-### 8. Priority-based notifications
-
-A ready package no longer automatically means a desktop notification.
-
-Default:
-
-```yaml
-notifications:
-  immediate_priority_min: 82
-  digest_priority_min: 68
-```
-
-- High priority: immediate notification when a new ready package is generated.
-- Review priority: shown in dashboard/digest without notification spam.
-- Low priority: dashboard only.
-
-The digest is generated at:
-
-```text
-output/daily_digest.html
-```
-
-You can regenerate it with:
-
-```powershell
-python agent.py digest
-```
-
-## Installation with your Conda environment
-
-You already use the Conda environment `agent`.
-
-```powershell
-conda activate agent
-cd C:\path\to\job_search_agent_v1_5
-pip install -r requirements.txt
-```
-
-Then:
-
-```powershell
-python agent.py doctor
-```
-
-For an optional network check:
-
-```powershell
-python agent.py doctor --network
-```
-
-## Codex check
-
-The desired output is:
-
-```text
-AI provider requested: codex_cli
-AI backend active: codex_cli
-```
-
-Test Codex in the same VS Code/Conda context:
-
-```powershell
-codex --version
-codex exec "Reply only with CODEX_WORKS"
-```
-
-If VS Code cannot find it, set an explicit path in `config.yaml`, for example:
-
-```yaml
-ai:
-  codex_path: "C:/Users/YOUR_USER/AppData/Roaming/npm/codex.cmd"
-```
-
-## VS Code / Shift+Enter
-
-Open:
-
-```text
-vscode_runner.py
-```
-
-Use the cells for:
-
-- setup check
-- search-query preview
-- dry run
-- real run
-- interactive dashboard
-- feedback
-- continuous watch
-
-Test without documents:
-
-```python
-result = run_once(dry_run=True)
-```
-
-Generate real packages:
-
-```python
-result = run_once(dry_run=False)
-```
-
-Continuous monitoring:
-
-```python
-watch(interval_minutes=30, dry_run=False)
-```
-
-## Search strategy
-
-V1.5 keeps the broad-search principle:
-
-```text
-SEARCH BROADLY
-      ↓
-EVALUATE STRICTLY
-      ↓
-WRITE TRUTHFULLY
-```
-
-It searches Core, Adjacent and selected Stretch career families rather than only literal Mechanical/Wind job titles.
-
-The five sanitized CV sources remain:
-
-```text
-input/cvs/mechanical_en_master.tex
-input/cvs/mechanical_de_master.tex
-input/cvs/wind_en_master.tex
-input/cvs/wind_de_master.tex
-input/cvs/wind_thesis_en_master.tex
-```
-
-The base CV is a layout/emphasis choice. The evidence registry is the cross-CV factual bridge.
-
-## German jobs
-
-German vacancies can produce German CVs and cover letters. German proficiency must remain truthfully B1/actively learning.
-
-Strong German requirements are recorded as risk/priority factors rather than automatically deleting technically relevant jobs.
-
-## Full-time jobs
-
-Full-time professional jobs remain a primary target alongside:
-
-- fixed-term
-- part-time
-- working student
-- internship
-- Master's thesis
-
-The agent must not leave thesis-only targeting language in a full-time application.
-
-## Package folders
-
-A generated package looks like:
-
-```text
-output/applications/2026-08-13/company/role/
-├── job.json
-├── job_description.txt
-├── match.json
-├── evidence_sources.json
-├── claim_trace.json
-├── CV_company_role_EN.tex
-├── CV_company_role_EN.pdf
-├── CoverLetter_company_role_EN.txt
-├── CoverLetter_company_role_EN.tex
-├── CoverLetter_company_role_EN.pdf
-└── package_status.json
-```
-
-## Safety rules
-
-V1.5 keeps the existing guardrails:
-
-- never invent skills or experience
-- never upgrade language proficiency
-- never overwrite source CVs
-- preserve sanitized identity placeholders
-- do not auto-submit applications
-- keep human review before application submission
-
-## Migrating from V1.4.2
-
-The safest route is to use the new V1.5 folder and copy only your local data you intentionally want to preserve:
+The safest setup is a new V1.6 folder. Copy only local data you want to keep, for example:
 
 ```text
 .env
@@ -390,20 +332,27 @@ input/manual_jobs.txt
 input/assets/
 ```
 
-If you want to keep old application history and feedback, you may also copy:
+You may copy `output/job_agent.sqlite3` if you want to preserve application history and feedback.
 
-```text
-output/job_agent.sqlite3
-```
+Important: V1.6 gives cached V1.5 AI matches a fresh analysis because V1.6 adds semantic evidence selection/context fields. Existing ready packages that do not contain a passing V1.6 semantic evidence audit are eligible for regeneration/review rather than being blindly trusted as ready.
 
-V1.5 performs lightweight SQLite schema migration automatically.
+## Safety rules
 
-Because V1.5 changes scoring semantics from one score to **Fit + Priority**, a clean test database is still recommended while validating the new behavior.
+- Never invent skills, responsibilities, employers, dates or results.
+- Never upgrade German above the real level.
+- Never combine separate evidence into an unsupported stronger claim.
+- Never overwrite source CVs.
+- Preserve sanitized identity/contact placeholders.
+- Never auto-submit applications.
+- Human review remains required before submission.
+
+For the first 5–10 generated packages, compare the wording closely with the master CV/evidence registry even with the new semantic audit. No automated check should be treated as a substitute for initial spot-checking.
 
 ## Useful commands
 
 ```powershell
 python agent.py doctor
+python agent.py doctor --network
 python agent.py run --dry-run
 python agent.py run
 python agent.py dashboard
@@ -415,10 +364,8 @@ python agent.py repair-db
 
 ## Testing
 
-Run:
-
 ```powershell
 python -m unittest discover -s tests -p "test*.py" -v
 ```
 
-The release validation for this package is documented in `VALIDATION_REPORT.md`.
+Release validation is documented in `VALIDATION_REPORT.md` and changes are summarized in `CHANGELOG_V1_6.md`.

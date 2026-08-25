@@ -26,6 +26,17 @@ def _practicality(job: Job, match: MatchResult, cfg: dict) -> tuple[int, list[st
     elif match.german_requirement == "preferred" and match.language_fit < 70:
         score -= 2; reasons.append("German is preferred, not mandatory")
 
+    # Deep AI may identify contextual language importance even when no explicit regex
+    # phrase exists. Treat this only as a soft practical risk; explicit detection above
+    # remains the authoritative statement of advertised requirements.
+    contextual = str(getattr(match, "contextual_german_importance", "") or "").lower()
+    mandatory = str(getattr(match, "contextual_german_mandatory", "") or "").lower()
+    if match.german_requirement in {"none", "preferred", ""} and match.language_fit < 70:
+        if mandatory == "yes" or contextual == "mandatory":
+            score -= 12; reasons.append("German appears contextually important/mandatory in the role")
+        elif contextual == "likely_important":
+            score -= 6; reasons.append("German appears contextually important in day-to-day duties")
+
     if match.missing_required:
         score -= min(28, len(match.missing_required) * 8)
         reasons.append(f"{len(match.missing_required)} missing/uncertain required item(s)")

@@ -79,6 +79,21 @@ def env_expand(value: str) -> str:
     return pattern.sub(repl, value)
 
 
+def is_safe_http_url(url: str) -> bool:
+    """Allow only ordinary HTTP(S) URLs for fetched/rendered job links."""
+    if not isinstance(url, str) or not url.strip():
+        return False
+    try:
+        parts = urlsplit(url.strip())
+        return parts.scheme.lower() in {"http", "https"} and bool(parts.netloc)
+    except Exception:
+        return False
+
+
+def safe_http_url(url: str) -> str:
+    return url.strip() if is_safe_http_url(url) else ""
+
+
 TRACKING_QUERY_KEYS = {
     "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
     "src", "source", "ref", "referrer", "trackingid", "tracking_id", "gh_src",
@@ -86,8 +101,8 @@ TRACKING_QUERY_KEYS = {
 }
 
 def canonical_url(url: str) -> str:
-    """Return a stable vacancy URL without fragments and common tracking parameters."""
-    if not url:
+    """Return a stable HTTP(S) vacancy URL without fragments/tracking parameters."""
+    if not is_safe_http_url(url):
         return ""
     try:
         parts = urlsplit(url.strip())

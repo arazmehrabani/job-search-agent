@@ -1,94 +1,81 @@
-# Job Search Agent V1.5.1 — Validation Report
+# Job Search Agent V1.6 — Validation Report
 
-Validation date: 2026-08-13
+Validation date: 2026-08-14
 
 ## Automated tests
 
+Command:
+
 ```text
-29 / 29 tests passed
+python -m unittest discover -s tests -p "test*.py" -v
 ```
 
-The suite contains the existing V1.4.x regression tests plus V1.5 tests.
+Result:
 
-### Existing regression coverage retained
+```text
+39 tests passed
+```
 
-- tracking URL canonicalization
-- Ashby enrichment and stable vacancy identity
-- TÜV SÜD / SuccessFactors real portal shape
-- portal heading is not mistaken for job title
-- D&I boilerplate is not mistaken for company name
-- `international` is not classified as internship
+The suite retains V1.4/V1.5 regression coverage and adds V1.6 checks for:
+
+- HTTP/HTTPS-only URL policy
+- database rejection of unsafe URL schemes
+- dashboard non-rendering of unsafe `javascript:` links
+- feedback payload validation
+- per-host request throttling
+- persistent page caching
+- robots.txt disallow handling
+- semantic evidence selection beyond lexical overlap
+- semantic claim-vs-evidence rejection of an overstatement (`supported` → `led`)
+- contextual German-language risk affecting application priority softly
+
+Existing regressions still cover:
+
+- TÜV SÜD SuccessFactors title/company/location extraction
+- real TÜV portal boilerplate not becoming the company name
+- `international` not becoming `internship`
 - `fluent in German` detection
-- `German advantageous` is preferred, not mandatory
-- German/English vacancy-language detection
-- working-student/full-time/thesis employment classification
-- manual old vacancy bypass vs automated age filter
-- multi-CV source selection
-- identity-protection round trip
+- `German advantageous` remaining preferred rather than required
+- Ashby enrichment and source IDs
+- tracking URL canonicalization/deduplication
+- manual vacancy age bypass
+- old automatically discovered vacancy filtering
+- Fit vs Priority separation
+- feedback learning
+- Codex-first provider safety
+- AI usage telemetry
+- evidence retrieval for wind-load roles
+- identity-line protection
 
-### V1.5 coverage
+## Python validation
 
-- verified evidence retrieval selects wind/CAE evidence for relevant jobs
-- Fit and Priority are separate values
-- major German requirement can lower Priority without rewriting Fit
-- feedback history can produce a bounded career-family preference adjustment
-- Codex-first provider does not silently use OpenAI API merely because an API key exists
-- AI usage/token/cost telemetry is stored in SQLite
-- dashboard contains Fit, Priority and feedback controls
+All project Python files compile successfully with `py_compile`.
 
-## Static code validation
+## LaTeX validation
 
-```text
-python -m compileall -q .
-COMPILE_OK
-```
-
-## Pipeline smoke test
-
-A no-source dry pipeline run completed successfully and returned:
+All five sanitized working CV bases compile successfully with `pdflatex`:
 
 ```text
-raw_found: 0
-unique: 0
-evaluated: 0
-errors: []
-parse_failures: []
+mechanical_de_master.tex   2 pages
+mechanical_en_master.tex   2 pages
+wind_de_master.tex         2 pages
+wind_en_master.tex         2 pages
+wind_thesis_en_master.tex  2 pages
 ```
 
-This validates configuration loading, database initialization, query planning, evidence loading, priority/feedback infrastructure and pipeline return schema without external network dependencies.
+## V1.6 readiness gate
 
-## Doctor smoke test
+For generated application packages with the default configuration, READY now requires:
 
-The release package successfully checks:
+1. AI/Codex document generation succeeded.
+2. Required language tailoring checks passed.
+3. Valid evidence IDs exist for CV and cover letter.
+4. Material claim traces exist for both CV and cover letter.
+5. Semantic claim-vs-evidence audit passes.
+6. Required PDFs compile when PDF compilation is enabled.
 
-- Python version
-- Conda environment
-- Codex executable/provider
-- API credentials as optional
-- LaTeX compiler
-- pdfinfo
-- all five CV sources
-- identity placeholders
-- profile
-- career scope
-- evidence registry
-- assets directory
-- output writability
-- SQLite integrity
+A semantic-audit failure or unsupported major claim produces a review package instead of READY.
 
-In the build environment, 33 verified evidence objects were loaded.
+## Network policy notes
 
-## CV privacy validation
-
-The sanitized working CV templates were scanned for the previously shared real identity/contact strings. No matching real name/email/phone/LinkedIn values were found in the V1.5 working CV/profile files.
-
-## Important runtime note
-
-Codex authentication cannot be validated inside the release build container because the user's local ChatGPT/Codex login lives on their Windows machine. On the target machine run:
-
-```powershell
-codex exec "Reply only with CODEX_WORKS"
-python agent.py doctor
-```
-
-and confirm the active backend is `codex_cli` before expecting deep matching or document generation.
+The V1.6 HTTP layer includes request throttling, page cache, retry/backoff, Retry-After handling and robots.txt checks. Unit tests use mocked HTTP responses; the release validation did not mass-fetch external career sites.

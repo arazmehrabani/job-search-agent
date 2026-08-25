@@ -8,7 +8,8 @@ import requests
 from bs4 import BeautifulSoup
 
 from .models import Job
-from .utils import canonical_url, parse_datetime, strip_html
+from .utils import canonical_url, parse_datetime, strip_html, is_safe_http_url
+from .http_policy import HttpPolicy, FetchResult
 
 EXPIRED_MARKERS = [
     "job is no longer available", "position is no longer available", "this job has expired",
@@ -261,75 +262,112 @@ def _apply_ashby(job: Job, plain: str, url: str):
         job.metadata["working_model"] = location_type
 
 
-def check_and_enrich(job: Job, timeout: int = 20) -> tuple[str, Job]:
-    if not job.url:
-        return "unknown", job
-    try:
-        r = requests.get(job.url, timeout=timeout, allow_redirects=True, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36"
-        })
-    except Exception:
-        return "unknown", job
-    if r.status_code in (404, 410):
-        return "expired", job
-    if r.status_code in (401, 403, 429) or r.status_code >= 500:
-        return "unknown", job
+class PageChecker:
+    """Live-page verifier/enricher using the V1.6 polite HTTP policy."""
 
-    text = r.text or ""
-    plain_full = strip_html(text)
-    plain_low = plain_full.lower()
-    if any(m in plain_low for m in EXPIRED_MARKERS):
-        return "expired", job
+    def __init__(self, cfg: dict | None = None, policy: HttpPolicy | None = None):
+        self.cfg = cfg or {}
+        self.policy = policy or HttpPolicy(self.cfg)
 
-    soup = BeautifulSoup(text, "html.parser")
-    jp = _extract_jsonld(soup)
-    _apply_jsonld(job, jp)
+    def check_and_enrich(self, job: Job, timeout: int | None = None, force_refresh: bool = False) -> tuple[str, Job]:
+        if not job.url:
+            return "unknown", job
+        if not is_safe_http_url(job.url):
+            job.metadata["pagecheck_error"] = "unsafe_url_scheme"
+            return "unsafe_url", job
 
-    final_url = canonical_url(r.url)
-    host = urlsplit(final_url).netloc.lower()
-    extracted_id = _source_id_from_url(final_url)
-    if extracted_id:
-        job.source_id = extracted_id
+        fetched = self.policy.fetch(job.url, timeout=timeout, force_refresh=force_refresh)
+        job.metadata["pagecheck_from_cache"] = bool(fetched.from_cache)
+        if fetched.error == "robots_disallowed":
+            job.metadata["pagecheck_error"] = "robots_disallowed"
+            return "robots_disallowed", job
+        if fetched.error:
+            job.metadata["pagecheck_error"] = fetched.error[:500]
+            return "unknown", job
 
-    # Prefer H1/OG title over browser-title boilerplate.
-    if not job.title:
-        h1 = soup.find("h1")
-        og = soup.find("meta", attrs={"property": "og:title"})
-        title = _first(
-            h1.get_text(" ", strip=True) if h1 else "",
-            og.get("content") if og else "",
-            soup.title.get_text(" ", strip=True) if soup.title else "",
-        )
-        title = re.sub(r"\s+(?:Job Details|Job Description)\s*\|.*$", "", title, flags=re.I)
-        job.title = title[:220].strip()
+        status_code = int(fetched.status_code or 0)
+        if status_code in (404, 410):
+            return "expired", job
+        if status_code in (401, 403, 429) or status_code >= 500 or status_code <= 0:
+            return "unknown", job
 
-    if "jobs.tuvsud.com" in host:
-        _apply_successfactors(job, plain_full, final_url)
-        job.metadata["platform"] = "successfactors"
-    elif host.endswith("ashbyhq.com"):
-        _apply_ashby(job, plain_full, final_url)
-        job.metadata["platform"] = "ashby"
+        text = fetched.text or ""
+        plain_full = strip_html(text)
+        plain_low = plain_full.lower()
+        if any(m in plain_low for m in EXPIRED_MARKERS):
+            return "expired", job
 
-    if not job.description or len(job.description) < 120:
-        container = soup.find("main") or soup.find("article") or soup.body
-        if container:
-            job.description = strip_html(str(container))[:20000]
+        soup = BeautifulSoup(text, "html.parser")
+        jp = _extract_jsonld(soup)
+        _apply_jsonld(job, jp)
 
-    if not job.company:
-        ogsite = soup.find("meta", attrs={"property": "og:site_name"})
-        if ogsite and ogsite.get("content"):
-            site = str(ogsite["content"]).strip()
-            if site.lower() not in {"jobs", "careers", "job details", "ashby"}:
-                job.company = site[:140]
+        final_url = canonical_url(fetched.url) or canonical_url(job.url)
+        host = urlsplit(final_url).netloc.lower() if final_url else ""
+        extracted_id = _source_id_from_url(final_url)
+        if extracted_id:
+            job.source_id = extracted_id
 
-    if not job.apply_url:
-        for a in soup.find_all("a", href=True):
-            label = a.get_text(" ", strip=True).lower()
-            if any(w == label or w in label for w in APPLY_WORDS):
-                job.apply_url = requests.compat.urljoin(r.url, a["href"])
-                break
+        # Prefer H1/OG title over browser-title boilerplate.
+        if not job.title:
+            h1 = soup.find("h1")
+            og = soup.find("meta", attrs={"property": "og:title"})
+            title = _first(
+                h1.get_text(" ", strip=True) if h1 else "",
+                og.get("content") if og else "",
+                soup.title.get_text(" ", strip=True) if soup.title else "",
+            )
+            title = re.sub(r"\s+(?:Job Details|Job Description)\s*\|.*$", "", title, flags=re.I)
+            job.title = title[:220].strip()
 
-    job.url = final_url
-    if not job.apply_url:
-        job.apply_url = final_url
-    return "active", job
+        if "jobs.tuvsud.com" in host:
+            _apply_successfactors(job, plain_full, final_url)
+            job.metadata["platform"] = "successfactors"
+        elif host.endswith("ashbyhq.com"):
+            _apply_ashby(job, plain_full, final_url)
+            job.metadata["platform"] = "ashby"
+
+        if not job.description or len(job.description) < 120:
+            container = soup.find("main") or soup.find("article") or soup.body
+            if container:
+                job.description = strip_html(str(container))[:20000]
+
+        if not job.company:
+            ogsite = soup.find("meta", attrs={"property": "og:site_name"})
+            if ogsite and ogsite.get("content"):
+                site = str(ogsite["content"]).strip()
+                if site.lower() not in {"jobs", "careers", "job details", "ashby"}:
+                    job.company = site[:140]
+
+        if not job.apply_url:
+            for a in soup.find_all("a", href=True):
+                label = a.get_text(" ", strip=True).lower()
+                if any(w == label or w in label for w in APPLY_WORDS):
+                    candidate = requests.compat.urljoin(fetched.url or job.url, a["href"])
+                    if is_safe_http_url(candidate):
+                        job.apply_url = candidate
+                        break
+
+        if final_url:
+            job.url = final_url
+        if not job.apply_url:
+            job.apply_url = final_url or job.url
+        return "active", job
+
+
+def check_and_enrich(job: Job, timeout: int = 20, cfg: dict | None = None) -> tuple[str, Job]:
+    """Backward-compatible convenience wrapper.
+
+    When called without config (as in unit tests/external helpers), network etiquette
+    features are disabled to avoid surprising sleeps/robots requests. The real pipeline
+    creates one shared PageChecker with the configured V1.6 policy.
+    """
+    if cfg is None:
+        cfg = {"http": {"min_delay_per_host_seconds": 0, "delay_jitter_seconds": 0,
+                        "max_retries": 0, "page_cache_minutes": 0,
+                        "respect_robots_txt": False}}
+        policy = HttpPolicy(cfg)
+        # Preserve compatibility with callers/tests that monkeypatch src.pagecheck.requests.get.
+        policy.session = requests
+        return PageChecker(cfg, policy=policy).check_and_enrich(job, timeout=timeout)
+    return PageChecker(cfg).check_and_enrich(job, timeout=timeout)
+

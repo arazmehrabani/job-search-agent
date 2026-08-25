@@ -68,6 +68,13 @@ def doctor(cfg, network: bool = False):
     profile = Path(cfg.get("documents", {}).get("profile", "input/profile.json")); add("Profile", profile.exists(), profile)
     scope = Path(cfg.get("search", {}).get("career_scope_file", "input/career_scope.yaml")); add("Career scope", scope.exists(), scope)
     evidence = load_evidence_registry(cfg); add("Evidence registry", len(evidence) >= 20, f"{len(evidence)} verified evidence objects")
+    ecfg = cfg.get("evidence", {}) or {}
+    add("Semantic evidence select", bool(ecfg.get("semantic_selection", {}).get("enabled", True)), "deep-match semantic second pass")
+    add("Semantic claim audit", bool(ecfg.get("semantic_audit", {}).get("enabled", True)), "required before READY" if ecfg.get("semantic_audit", {}).get("required_for_ready", True) else "enabled but optional")
+    hcfg = cfg.get("http", {}) or {}
+    add("HTTP host throttling", float(hcfg.get("min_delay_per_host_seconds", 0) or 0) > 0, f"{hcfg.get('min_delay_per_host_seconds', 0)}s minimum per host")
+    add("robots.txt policy", bool(hcfg.get("respect_robots_txt", True)), f"fail_open={bool(hcfg.get('robots_fail_open', True))}")
+    add("HTTP page cache", float(hcfg.get("page_cache_minutes", 0) or 0) > 0, f"{hcfg.get('page_cache_minutes', 0)} minutes")
     assets = Path(cfg.get("documents", {}).get("assets_dir", "input/assets")); add("Assets directory", assets.exists(), assets)
 
     output = Path("output"); output.mkdir(exist_ok=True)
@@ -87,7 +94,7 @@ def doctor(cfg, network: bool = False):
             add("Internet connectivity", r.status_code < 500, f"HTTP {r.status_code}")
         except Exception as exc: add("Internet connectivity", False, exc)
 
-    print("\nJob Search Agent V1.5 — doctor\n")
+    print("\nJob Search Agent V1.6 — doctor\n")
     for name, ok, note in checks:
         print(f"{'OK ' if ok else '---'} {name:22} {note}")
     failures = [x for x in checks if not x[1] and x[0] not in {"OPENAI_API_KEY", "ADZUNA keys", "JOOBLE_API_KEY", "Git", "pdfinfo", "Codex CLI"}]
@@ -95,7 +102,7 @@ def doctor(cfg, network: bool = False):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Personal Job Search Agent V1.5")
+    ap = argparse.ArgumentParser(description="Personal Job Search Agent V1.6")
     ap.add_argument("--config", default="config.yaml")
     sub = ap.add_subparsers(dest="command", required=True)
     r = sub.add_parser("run", help="Search, verify, rank and prepare application packages")
