@@ -3,6 +3,6 @@
   "resets_on": "",
   "period_started_on": "",
   "updated_at": "",
-  "updated_from": "public history template",
-  "note": "Provider work is intentionally locked in the public history. Update from your own usage UI before enabling full provider work."
+  "updated_from": "public repository template",
+  "note": "Provider work is intentionally locked in the public template. Before using --full, update this file from your own provider usage UI and review the local budget limits."
 }
