@@ -15,6 +15,7 @@ from .sources.manual import ManualLinksSource
 from .sources.email_alert_files import EmailAlertFilesSource
 from .pagecheck import PageChecker
 from .filters import hard_filter, age_days, heuristic_score
+from .relevance import title_relevance_gate, assess_relevance
 from .ai import AIEngine
 from .documents import generate_package
 from .notifier import notify
@@ -220,7 +221,7 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
     broad_success = [x for x in source_reports if x.get("category") == "broad" and x.get("automatic") and x.get("success")]
     auto_discovery_active = bool(broad_success)
     discovery_report = {
-        "version": "1.7",
+        "version": "1.8",
         "automatic_discovery_active": auto_discovery_active,
         "planned_queries": len(queries),
         "sources": source_reports,
@@ -243,6 +244,8 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
     # spent on the strongest candidates, not simply whichever source happened to run first.
     candidates = []
     parse_failures = []
+    title_gate_rejected = 0
+    post_enrichment_rejected = 0
     for job in unique:
         # Do not download obviously stale automatically-discovered detail pages.
         # Manual URLs intentionally bypass this freshness shortcut.
@@ -253,6 +256,18 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
             db.set_active(fp, "unknown")
             db.set_filter_reason(fp, f"older than {max_age} days")
             continue
+
+        # V1.8 cheap title gate runs before detail-page enrichment. It blocks only
+        # obvious wrong-domain titles (backend/frontend/sales/HR/etc.) with no
+        # mechanical/wind/simulation/control bridge, saving page requests and AI budget.
+        title_gate = title_relevance_gate(job, cfg)
+        if not title_gate.keep:
+            fp = db.upsert_job(job)
+            db.set_active(fp, "unknown")
+            db.set_filter_reason(fp, title_gate.reason)
+            title_gate_rejected += 1
+            continue
+
         if verify:
             active, job = page_checker.check_and_enrich(job)
         else:
@@ -272,6 +287,10 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
         ok, filter_reason = hard_filter(job, cfg)
         if not ok:
             db.set_filter_reason(fp, filter_reason)
+            if filter_reason in {"NO_RELEVANT_ENGINEERING_DOMAIN_SIGNAL"} or filter_reason in {
+                "PURE_SOFTWARE_BACKEND", "BUSINESS_SALES_MARKETING", "FINANCE_HR_ADMIN", "DESIGN_MEDIA_NONENGINEERING"
+            }:
+                post_enrichment_rejected += 1
             continue
         db.set_filter_reason(fp, "")
 
@@ -299,15 +318,26 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
             "source_cv": source_cv.key if source_cv else "",
         }
         base = heuristic_score(job, profile, cfg)
-        # Manual links receive a small ordering bonus because the user explicitly chose
-        # them, but their actual FIT score remains unchanged.
-        ordering_score = base + (8 if job.source == "manual" else 0)
+        relevance = assess_relevance(job, cfg)
+        # Relevance rank comes before PRE score. This guarantees that a CAE/mechanical/
+        # wind/simulation vacancy reaches limited AI budgets before generic or weak
+        # adjacent titles returned earlier by a source. Manual links get a small bonus.
+        ordering_score = relevance.rank * 2 + base + (10 if job.source == "manual" else 0)
         candidates.append({
             "job": job, "fp": fp, "active": active, "context": context,
-            "source_cv": source_cv, "base": base, "ordering_score": ordering_score,
+            "source_cv": source_cv, "base": base, "relevance_rank": relevance.rank,
+            "ordering_score": ordering_score,
         })
 
-    candidates.sort(key=lambda x: (x["ordering_score"], x["base"]), reverse=True)
+    candidates.sort(key=lambda x: (x["relevance_rank"], x["base"], x["ordering_score"]), reverse=True)
+
+    discovery_report.update({
+        "unique_results": len(unique),
+        "title_gate_rejected": title_gate_rejected,
+        "post_enrichment_rejected": post_enrichment_rejected,
+        "eligible_after_relevance_filters": len(candidates),
+    })
+    _write_discovery_report(discovery_report)
 
     screened = 0
     deep_evaluated = 0
@@ -321,7 +351,7 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
         match = _match_from_json(state.get("match_json"))
         # Deep AI and HOLD/SKIP screens are cached. Cheap heuristic rows are refreshed
         # so parser fixes/new Codex availability can upgrade them automatically.
-        should_refresh = match is None or match.source == "heuristic" or match.analysis_version != "1.6"
+        should_refresh = match is None or match.source == "heuristic" or match.analysis_version != "1.8"
         if should_refresh:
             match, screened, deep_evaluated = _evaluate_job(
                 job, profile, context, cfg, ai, registry, screened, deep_evaluated
@@ -409,6 +439,8 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
         "raw_found": len(found),
         "unique": len(unique),
         "eligible_after_filters": len(candidates),
+        "title_gate_rejected": title_gate_rejected,
+        "post_enrichment_rejected": post_enrichment_rejected,
         "evaluated": evaluated,
         "ai_screened": screened,
         "deep_ai_evaluated": deep_evaluated,

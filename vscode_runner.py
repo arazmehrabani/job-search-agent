@@ -1,9 +1,9 @@
 # %% [markdown]
-# JOB SEARCH AGENT V1.7 — VS CODE / CONDA RUNNER
+# JOB SEARCH AGENT V1.8 — VS CODE / CONDA RUNNER
 #
 # Select the Conda interpreter named `agent`, then run cells with Shift+Enter.
-# V1.7 adds polite/cached page checks, semantic evidence selection, claim-vs-evidence auditing,
-# safer dashboard feedback handling, Fit vs Priority, feedback learning and tiered AI.
+# V1.8 adds a domain relevance gate, domain-anchored PRE scoring, relevance-first AI budgeting,
+# tighter search queries and a dashboard that hides hard rejects by default. V1.6/V1.7 safety/discovery remains.
 
 # %% SETUP — Shift+Enter
 from __future__ import annotations
@@ -42,9 +42,9 @@ def run_once(dry_run: bool = False):
     db = Database(DB_FILE)
     try:
         backend = AIEngine(cfg).backend_name()
-        print(f"\n=== Job Agent V1.7 | AI backend: {backend} | dry_run={dry_run} ===")
+        print(f"\n=== Job Agent V1.8 | AI backend: {backend} | dry_run={dry_run} ===")
         result = run_pipeline(cfg, db, dry_run=dry_run)
-        dashboard = build_dashboard(db)
+        dashboard = build_dashboard(db, cfg=cfg)
         digest = build_digest(db, min_priority=int(cfg.get("notifications", {}).get("digest_priority_min", 68)))
         print(json.dumps(result, ensure_ascii=False, indent=2))
         print("Dashboard:", Path(dashboard).resolve())
@@ -82,7 +82,7 @@ def save_feedback(identifier: str, decision: str, reason: str = ""):
         if not fp: raise ValueError("Job not found in database")
         db.record_feedback(fp, decision, reason)
         write_feedback_summary(db, cfg)
-        build_dashboard(db)
+        build_dashboard(db, cfg=cfg)
         print(f"Saved {decision.upper()} for {fp}")
     finally: db.close()
 
@@ -99,6 +99,7 @@ if ai.backend_name() == "heuristic":
 print("Verified evidence objects:", len(load_evidence_registry(cfg)))
 print("Source CVs:")
 for src in configured_cv_sources(cfg): print("  -", src.key, "->", src.path)
+print("Relevance gate:", cfg.get("relevance", {}))
 print("Tiered AI:", cfg.get("ai", {}).get("tiered", {}))
 print("Priority thresholds:", cfg.get("priority", {}))
 print("Feedback learning:", cfg.get("feedback", {}))

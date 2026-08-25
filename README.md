@@ -1,21 +1,104 @@
-# Job Search Agent V1.7
+# Job Search Agent V1.8
 
-V1.7 keeps all V1.6 reliability/evidence safeguards and fixes the biggest practical discovery problem: the agent now has broad, enabled-by-default job discovery that works even when you have not configured Adzuna or Jooble API keys. Every run also reports which sources actually searched and how many jobs each returned.
+V1.8 is the **relevance-gate** release. It keeps V1.7.1 automatic discovery and all V1.6 safety/evidence safeguards, but fixes the major problem exposed by the 223-job dashboard: broad sources were finding plenty of vacancies while generic words such as `engineer`, `development`, `project`, `Python` and `automation` allowed obviously unrelated software/business jobs to survive too far into the pipeline.
 
-The design principle remains:
+The design principle is now enforced in code:
 
 ```text
 SEARCH BROADLY
       ↓
-EVALUATE STRICTLY
+REJECT OBVIOUS WRONG-DOMAIN TITLES CHEAPLY
+      ↓
+EVALUATE RELEVANT / AMBIGUOUS ENGINEERING JOBS STRICTLY
       ↓
 WRITE TRUTHFULLY
 ```
 
+## V1.8 — relevance gate and AI-budget protection
 
-## V1.7 — automatic job discovery
+### 1. Title-domain gate before page fetching
 
-V1.7 no longer treats a list of planned queries as proof that jobs were actually searched. Two broad sources are enabled by default:
+Automatic jobs are screened by title **before** the agent downloads the detailed vacancy page. Pure backend/frontend/full-stack/DevOps/cloud/data-platform/software roles, sales/marketing, finance/HR/admin and design/media roles are rejected when no defensible engineering bridge exists.
+
+Examples:
+
+```text
+Software Engineer, Backend Focused        -> HARD REJECT / PURE_SOFTWARE_BACKEND
+Data Platform Engineer                    -> HARD REJECT / PURE_SOFTWARE_BACKEND
+Account Executive                         -> HARD REJECT / BUSINESS_SALES_MARKETING
+Finance Manager Renewable Energy          -> HARD REJECT / FINANCE_HR_ADMIN
+
+Software Engineer - Simulation            -> KEEP (simulation bridge)
+Control Software Engineer - Wind Turbines -> KEEP (control + wind bridge)
+Robotics CAE Engineer                      -> KEEP
+Mechanical Engineer                       -> KEEP
+Berechnungsingenieur                      -> KEEP
+```
+
+Manual URLs bypass this automatic title rejection because an explicit URL from you means “review this job”, even if it is unusual.
+
+### 2. Domain signal required after enrichment
+
+Ambiguous titles such as `Systems Engineer`, `Project Engineer`, `Research Engineer`, `Quality Engineer` or `Development Engineer` are not accepted just because they contain `Engineer`. Their detailed vacancy text must contain a real bridge to mechanical engineering, CAE/FEA, structural dynamics, wind, simulation, manufacturing, controls/mechatronics, validation, PLM/engineering data, or a configured adjacent family.
+
+### 3. PRE score is now domain-anchored
+
+Generic words no longer earn meaningful fit points by themselves. The local score is driven by:
+
+```text
+strong/bridged target title
++ mechanical/CAE/wind/simulation domain evidence
++ specific verified profile/evidence hits
++ career-family signal
+```
+
+A pure backend software role now receives PRE `0` and is filtered before AI. Typical mechanical/structural/simulation target titles start high enough to reach AI screening when their vacancy text supports the match.
+
+### 4. Relevant jobs consume AI budget first
+
+V1.8 sorts candidates by a cheap **relevance rank before PRE score**. Limited Codex screen/deep-analysis slots therefore go to obvious CAE/mechanical/wind/simulation candidates before generic adjacent jobs.
+
+### 5. Arbeitnow matching no longer treats `engineer` as a domain
+
+V1.7 could match the query `mechanical engineer` against `Software Engineer, Backend Focused` because the word `engineer` appeared in both. V1.8 ignores generic query tokens and requires the domain-bearing token (`mechanical`, `simulation`, `wind`, etc.) to match.
+
+### 6. Professional jobs are no longer accidentally filtered
+
+V1.7 could mark a legitimate professional job as ineligible when the ATS did not explicitly expose `Full time` even though professional full-time roles are a primary target. `professional` is now an allowed employment state and also maps safely to the enabled full-time policy.
+
+### 7. Tighter search plan
+
+The default anchors are now deliberately domain-specific, for example:
+
+```text
+mechanical design engineer
+CAE engineer mechanical
+FEA engineer mechanical
+structural analysis engineer
+mechanical simulation engineer
+validation engineer mechanical
+Berechnungsingenieur Maschinenbau
+Berechnungsingenieur FEM
+Simulationsingenieur Maschinenbau
+Werkstudent CAE
+Masterarbeit Windenergie Simulation
+```
+
+AI-generated search-query expansion is disabled by default. The curated career map still rotates adjacent/stretch queries, but Codex is reserved for actual job reasoning rather than inventing search strings.
+
+### 8. Dashboard shows attention-worthy jobs first
+
+The normal table contains only `HIGH`, `REVIEW` and `LOW/POSSIBLE` jobs at or above the configured priority floor. Hard-filtered jobs and `REJECT` rows stay auditable inside a collapsed **Rejected / filtered audit** section.
+
+This means an irrelevant backend job can remain in SQLite for transparency without occupying your normal job-review list.
+
+### Recommended migration from V1.7.x
+
+Use V1.8 in a **new folder with a fresh `output/` database** for the cleanest first comparison. V1.8 will also clear stale scores when a rediscovered job becomes hard-filtered, so an old `PRE 46` backend row cannot remain actionable. Copy your personal local inputs/settings only if needed.
+
+## Historical: V1.7.1 — automatic job discovery
+
+V1.7.1 no longer treats a list of planned queries as proof that jobs were actually searched. Two broad sources are enabled by default:
 
 ```text
 Bundesagentur für Arbeit Jobsuche  -> public Germany-wide search pages
@@ -63,7 +146,7 @@ OK  email_alert       inbox      ... .eml alert file(s)
 Automatic broad discovery: CONFIGURED
 ```
 
-After every run, V1.7 writes:
+After every run, V1.7.1 writes:
 
 ```text
 output/discovery_report.json
@@ -73,7 +156,7 @@ The dashboard also shows **Auto discovery: ACTIVE/OFF**, raw discovered count, a
 
 ### Search coverage and rate control
 
-V1.7 keeps the 32-query career plan, but network sources can use a smaller per-source budget. Core anchor queries are retained and the remaining queries rotate between runs. This avoids sending all 32 searches to every provider every 30 minutes.
+V1.7.1 keeps the 32-query career plan, but network sources can use a smaller per-source budget. Core anchor queries are retained and the remaining queries rotate between runs. This avoids sending all 32 searches to every provider every 30 minutes.
 
 The default BA configuration is:
 
@@ -407,7 +490,7 @@ Feedback can make a small bounded adjustment to future **Priority** in the same 
 
 ## Migration from V1.5.1
 
-The safest setup is a new V1.7 folder. Copy only local data you want to keep, for example:
+The safest setup is a new version folder. Copy only local data you want to keep, for example:
 
 ```text
 .env

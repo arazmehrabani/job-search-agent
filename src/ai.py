@@ -144,7 +144,15 @@ class AIEngine:
                 if self.codex_model:
                     cmd += ["--model", self.codex_model]
                 cmd += ["-"]
-                p = subprocess.run(cmd, input=full_prompt, text=True, capture_output=True, timeout=self.timeout)
+                p = subprocess.run(
+                    cmd,
+                    input=full_prompt,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    capture_output=True,
+                    timeout=self.timeout,
+                )
                 if p.returncode != 0:
                     detail = (p.stderr or p.stdout or "unknown Codex error")[-4000:]
                     raise RuntimeError(f"Codex CLI failed: {detail}")
@@ -186,7 +194,7 @@ class AIEngine:
             decision_reasons=["Local capability-based pre-score; no deep AI assessment yet."],
             reasoning="Local capability-based heuristic. AI/Codex matching was unavailable or skipped.",
             source="heuristic",
-            analysis_version="1.6",
+            analysis_version="1.8",
             transferability="Local score includes transferable engineering capability and career-family signals.",
             evidence_ids=list(evidence_ids or []),
             **defaults,
@@ -440,7 +448,7 @@ Also provide a semantic second opinion on career family and German-language impo
             transferability=str(data.get("transferability", "")),
             reasoning=str(data.get("reasoning", "")),
             source=self.provider,
-            analysis_version="1.6",
+            analysis_version="1.8",
             screen_score=int((screen_data or {}).get("screen_score", 0) or 0),
             screen_decision=str((screen_data or {}).get("decision", "")),
             ai_career_family=str(data.get("ai_career_family", "") or ""),
@@ -467,7 +475,7 @@ Also provide a semantic second opinion on career family and German-language impo
             missing_required=list(screen.get("mandatory_gaps", []) or []),
             reasoning=str(screen.get("reason", "Compact AI screen; deep evaluation not promoted.")),
             source="ai_screen",
-            analysis_version="1.6",
+            analysis_version="1.8",
             screen_score=screen_score,
             screen_decision=decision,
             evidence_ids=[x for x in (screen.get("evidence_ids", []) or []) if x in set(ids)] or ids[:8],

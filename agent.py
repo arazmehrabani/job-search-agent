@@ -77,6 +77,7 @@ def doctor(cfg, network: bool = False):
 
     profile = Path(cfg.get("documents", {}).get("profile", "input/profile.json")); add("Profile", profile.exists(), profile)
     scope = Path(cfg.get("search", {}).get("career_scope_file", "input/career_scope.yaml")); add("Career scope", scope.exists(), scope)
+    add("Relevance gate", bool(cfg.get("relevance", {}).get("enabled", True)), "title/domain gate + relevance-first ordering")
     evidence = load_evidence_registry(cfg); add("Evidence registry", len(evidence) >= 20, f"{len(evidence)} verified evidence objects")
     ecfg = cfg.get("evidence", {}) or {}
     add("Semantic evidence select", bool(ecfg.get("semantic_selection", {}).get("enabled", True)), "deep-match semantic second pass")
@@ -104,7 +105,7 @@ def doctor(cfg, network: bool = False):
             add("Internet connectivity", r.status_code < 500, f"HTTP {r.status_code}")
         except Exception as exc: add("Internet connectivity", False, exc)
 
-    print("\nJob Search Agent V1.7 — doctor\n")
+    print("\nJob Search Agent V1.8 — doctor\n")
     for name, ok, note in checks:
         print(f"{'OK ' if ok else '---'} {name:22} {note}")
     optional_names = {"OPENAI_API_KEY", "ADZUNA keys", "JOOBLE_API_KEY", "Git", "pdfinfo", "Codex CLI"}
@@ -113,7 +114,7 @@ def doctor(cfg, network: bool = False):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Personal Job Search Agent V1.7")
+    ap = argparse.ArgumentParser(description="Personal Job Search Agent V1.8")
     ap.add_argument("--config", default="config.yaml")
     sub = ap.add_subparsers(dest="command", required=True)
     r = sub.add_parser("run", help="Search, verify, rank and prepare application packages")
@@ -140,7 +141,7 @@ def main():
     if args.command == "doctor":
         doctor(cfg, network=args.network); return
     if args.command == "sources":
-        print("\nJob Search Agent V1.7 — source status\n")
+        print("\nJob Search Agent V1.8 — source status\n")
         broad = 0
         live_ok = 0
         for src in build_sources(cfg):
@@ -166,23 +167,23 @@ def main():
         if args.command == "run":
             result = run_pipeline(cfg, db, dry_run=args.dry_run)
             print(json.dumps(result, ensure_ascii=False, indent=2))
-            p = build_dashboard(db); print(f"Dashboard: {p}")
+            p = build_dashboard(db, cfg=cfg); print(f"Dashboard: {p}")
             minp = int(cfg.get("notifications", {}).get("digest_priority_min", 68))
             dp = build_digest(db, min_priority=minp); print(f"Review digest: {dp}")
         elif args.command == "dashboard":
-            print(build_dashboard(db))
+            print(build_dashboard(db, cfg=cfg))
         elif args.command == "digest":
             minp = args.min_priority if args.min_priority is not None else int(cfg.get("notifications", {}).get("digest_priority_min", 68))
             print(build_digest(db, min_priority=minp))
         elif args.command == "repair-db":
-            removed = db.repair_legacy_ghosts(); print(f"Removed {removed} legacy ghost row(s)."); print(build_dashboard(db))
+            removed = db.repair_legacy_ghosts(); print(f"Removed {removed} legacy ghost row(s)."); print(build_dashboard(db, cfg=cfg))
         elif args.command == "feedback":
             fp = db.find_fingerprint(args.identifier)
             if not fp: raise SystemExit("Job not found. Use the exact dashboard URL, fingerprint, or source ID.")
             db.record_feedback(fp, args.decision, args.reason)
             write_feedback_summary(db, cfg)
             print(f"Saved {args.decision} for {fp}")
-            print(build_dashboard(db))
+            print(build_dashboard(db, cfg=cfg))
     finally:
         db.close()
 

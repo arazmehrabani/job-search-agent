@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from .models import Job
 from .utils import normalize_text
 from .career import detect_employment_type, load_career_scope, classify_career_family
+from .relevance import assess_relevance, specific_profile_hits
 
 
 def age_days(job: Job) -> float | None:
@@ -34,10 +35,18 @@ def hard_filter(job: Job, cfg: dict) -> tuple[bool, str]:
         if not (job.source == "manual" and bypass_manual_age):
             return False, f"older than {max_age} days"
 
+    relevance = assess_relevance(job, cfg)
+    if not relevance.keep:
+        return False, relevance.reason
+
     typ = detect_employment_type(job)
     allowed = set(prefs.get("allowed_employment_types", []) or [])
+    # "professional" means the vacancy did not expose a reliable schedule/contract
+    # label. It must not be rejected merely because the ATS omitted "full time".
     if allowed and typ not in allowed:
-        return False, f"employment type not enabled: {typ}"
+        professional_is_allowed = typ == "professional" and ("professional" in allowed or "full_time" in allowed)
+        if not professional_is_allowed:
+            return False, f"employment type not enabled: {typ}"
     return True, "ok"
 
 
@@ -56,40 +65,46 @@ def _profile_terms(profile: dict) -> list[str]:
 
 
 def heuristic_score(job: Job, profile: dict, cfg: dict) -> int:
-    text = normalize_text(f"{job.title} {job.description}")
-    title = normalize_text(job.title)
+    """Domain-anchored local PRE score.
+
+    V1.8 deliberately gives almost no value to generic words such as engineer,
+    development, project or automation. A vacancy needs a real mechanical/CAE/wind/
+    simulation/manufacturing/controls bridge before it can obtain a useful PRE score.
+    """
+    relevance = assess_relevance(job, cfg)
+    if not relevance.keep:
+        return 0
+
     preferred = cfg.get("preferences", {}).get("preferred_keywords", []) or []
-    terms = []
-    seen = set()
-    for t in _profile_terms(profile) + preferred:
-        n = normalize_text(str(t))
-        if n and n not in seen and len(n) >= 2:
-            seen.add(n)
-            terms.append(n)
+    profile_terms = _profile_terms(profile) + list(preferred)
+    evidence_hits = specific_profile_hits(job, profile_terms)
 
-    hits = [t for t in terms if t in text]
-    title_hits = [t for t in terms if t in title]
+    # Title/domain evidence dominates. This prevents "Software Engineer, Backend"
+    # from becoming a 40+ score simply because its description says Python/project.
+    if relevance.title_strength == "strong":
+        score = 48
+    elif relevance.title_strength == "bridge":
+        score = 36
+    elif relevance.title_strength == "body":
+        score = 28
+    else:
+        score = 16
 
-    # Broad capability scoring: eight meaningful evidence hits are already strong;
-    # we do not divide by the entire (large) skill inventory.
-    score = 15
-    score += min(42, len(hits) * 6)
-    score += min(12, len(title_hits) * 4)
+    score += min(14, len(relevance.title_anchor_hits) * 5)
+    score += min(12, len(relevance.title_bridge_hits) * 3)
+    score += min(16, len(relevance.body_domain_hits) * 2)
+    score += min(18, len(evidence_hits) * 3)
 
     scope_path = cfg.get("search", {}).get("career_scope_file", "input/career_scope.yaml")
     scope = load_career_scope(scope_path)
     _, _, tier, family_signal = classify_career_family(job, scope)
     if family_signal > 0:
-        tier_bonus = {"core": 20, "adjacent": 15, "stretch": 10}.get(tier, 12)
-        score += min(tier_bonus, 5 + family_signal * 2)
+        tier_bonus = {"core": 10, "adjacent": 7, "stretch": 4}.get(tier, 5)
+        score += min(tier_bonus, 2 + family_signal)
 
-    # Generic engineering/R&D titles deserve a chance even when wording differs
-    # from the source CV. AI/Codex performs the deeper evidence check afterward.
-    generic = [
-        "engineer", "ingenieur", "entwicklungsingenieur", "berechnungsingenieur",
-        "simulationsingenieur", "konstruktionsingenieur", "research engineer", "r&d engineer",
-    ]
-    if any(x in title for x in generic):
-        score += 6
+    # Student opportunities in a clearly relevant domain deserve to reach screening.
+    title = normalize_text(job.title)
+    if relevance.title_strength in {"strong", "bridge"} and any(x in title for x in ("werkstudent", "working student", "praktikum", "internship", "masterarbeit", "master thesis")):
+        score += 5
 
     return int(max(0, min(100, score)))

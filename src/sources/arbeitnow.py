@@ -56,17 +56,35 @@ class ArbeitnowSource(JobSource):
             " ".join(str(x) for x in (item.get("job_types") or [])),
         ]).lower()
         title = str(item.get("title") or "").lower()
+        generic = {
+            "engineer", "engineering", "ingenieur", "ingenieurin", "working", "student",
+            "werkstudent", "werkstudentin", "project", "development", "senior", "junior",
+            "manager", "specialist", "intern", "internship", "praktikum",
+        }
         for query in queries or [""]:
+            q = (query or "").strip().lower()
             toks = self._tokens(query)
             if not toks:
                 return True
-            # Broad discovery: title hit is strong; otherwise require at least two
-            # meaningful query tokens in the title/description/tags.
-            if any(t in title for t in toks):
+            if q and q in title:
                 return True
-            hits = sum(1 for t in toks if t in hay)
-            if hits >= min(2, len(toks)):
-                return True
+            specific = [t for t in toks if t not in generic]
+            # V1.7 treated the word "engineer" as enough to match "mechanical engineer"
+            # against every software/data engineer in the catalogue. V1.8 requires the
+            # domain-bearing part of the query to match as well.
+            if specific:
+                title_hits = sum(1 for t in specific if t in title)
+                hay_hits = sum(1 for t in specific if t in hay)
+                if title_hits >= 1:
+                    return True
+                required = 1 if len(specific) == 1 else min(2, len(specific))
+                if hay_hits >= required:
+                    return True
+            else:
+                # A query made only of generic tokens is intentionally weak: require all
+                # of them in the title rather than matching any one of them.
+                if all(t in title for t in toks):
+                    return True
         return False
 
     def _fetch_catalogue(self) -> list[dict[str, Any]]:
@@ -74,7 +92,7 @@ class ArbeitnowSource(JobSource):
         url = "https://www.arbeitnow.com/api/job-board-api"
         for page in range(1, self.pages + 1):
             r = requests.get(url, params={"page": page}, timeout=self.timeout,
-                             headers={"User-Agent": "JobSearchAgent/1.7"})
+                             headers={"User-Agent": "JobSearchAgent/1.8"})
             r.raise_for_status()
             data = r.json()
             batch = data.get("data", []) if isinstance(data, dict) else []

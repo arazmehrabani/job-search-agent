@@ -1,25 +1,30 @@
 search:
   country: de
   always_queries:
+  - wind turbine loads engineer
   - wind energy engineer
   - mechanical engineer
-  - CAE engineer
-  - FEA engineer
-  - simulation engineer
-  - development engineer
+  - mechanical design engineer
+  - CAE engineer mechanical
+  - FEA engineer mechanical
+  - structural analysis engineer
+  - structural dynamics engineer
+  - mechanical simulation engineer
+  - validation engineer mechanical
+  - test engineer mechanical
+  - product development engineer mechanical
+  - renewable energy project engineer
+  - Berechnungsingenieur Maschinenbau
+  - Berechnungsingenieur FEM
+  - Simulationsingenieur Maschinenbau
+  - Entwicklungsingenieur Maschinenbau
+  - Konstruktionsingenieur Maschinenbau
+  - Projektingenieur Windenergie
   - Werkstudent Maschinenbau
   - Werkstudent Windenergie
-  - working student engineering
-  - product development engineer
-  - renewable energy engineer
-  - project engineer renewable energy
-  - Berechnungsingenieur
-  - Simulationsingenieur
-  - Entwicklungsingenieur
-  - Konstruktionsingenieur
-  - Ingenieur Erneuerbare Energien
+  - Werkstudent CAE
   - Praktikum Maschinenbau
-  - Masterarbeit Windenergie
+  - Masterarbeit Windenergie Simulation
   broader_queries: []
   career_scope_file: input/career_scope.yaml
   use_career_scope: true
@@ -28,10 +33,10 @@ search:
   - adjacent
   - stretch
   auto_from_profile: true
-  auto_from_cv: true
+  auto_from_cv: false
   broad_search: true
   max_auto_queries: 18
-  max_queries_per_cycle: 32
+  max_queries_per_cycle: 30
   query_rotation_state: output/query_rotation.json
   search_plan_output: output/search_plan.json
   job_languages:
@@ -64,6 +69,7 @@ preferences:
   - head of
   - chief engineer
   allowed_employment_types:
+  - professional
   - full_time
   - part_time
   - fixed_term
@@ -115,10 +121,10 @@ ai:
   fallback_to_heuristic: true
   tiered:
     enabled: true
-    screen_min_pre_score: 40
+    screen_min_pre_score: 42
     deep_min_screen_score: 58
     deep_force_pre_score: 72
-    max_screen_per_run: 24
+    max_screen_per_run: 20
     max_deep_per_run: 10
     screen_evidence_limit: 8
     deep_evidence_limit: 16
@@ -133,7 +139,7 @@ sources:
     delay_jitter_seconds: 0.25
     respect_robots_txt: true
     robots_fail_open: true
-    user_agent: JobSearchAgent/1.7
+    user_agent: JobSearchAgent/1.8
     results_per_query: 8
   arbeitnow:
     enabled: true
@@ -336,3 +342,13 @@ telemetry:
   enabled: true
   openai_input_cost_per_million: null
   openai_output_cost_per_million: null
+relevance:
+  enabled: true
+  manual_bypass_title_gate: true
+  manual_bypass_domain_gate: true
+  hard_reject_obvious_unrelated: true
+  require_domain_signal_after_enrichment: true
+dashboard:
+  main_min_priority: 55
+  hide_rejected_by_default: true
+  audit_limit: 250

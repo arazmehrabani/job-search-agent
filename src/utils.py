@@ -1,15 +1,20 @@
 
 from __future__ import annotations
-import hashlib, html, json, re
+import hashlib, html, json, re, warnings
 from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 from datetime import datetime, timezone
 from pathlib import Path
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 
 def strip_html(value: str) -> str:
     if not value:
         return ""
-    soup = BeautifulSoup(value, "html.parser")
+    # Some ATS/API descriptions contain XML declarations or XML-looking fragments.
+    # strip_html only needs text extraction, so keep the tolerant HTML parser while
+    # suppressing BeautifulSoup's non-fatal XMLParsedAsHTMLWarning.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", XMLParsedAsHTMLWarning)
+        soup = BeautifulSoup(value, "html.parser")
     return re.sub(r"\s+", " ", soup.get_text(" ", strip=True)).strip()
 
 def normalize_text(value: str) -> str:

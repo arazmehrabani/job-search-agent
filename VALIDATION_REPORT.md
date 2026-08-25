@@ -1,76 +1,39 @@
-# Job Search Agent V1.7 — Validation Report
-
-Validation date: 2026-08-14
+# Job Search Agent V1.8 — Validation Report
 
 ## Automated tests
 
-Command:
+`python -m unittest discover -s tests -q`
 
-```text
-python -m unittest discover -s tests -p "test*.py" -v
-```
+Result: **56 / 56 tests passed**.
 
-Result:
+The suite includes all prior parser, deduplication, German-language, CV selection, feedback, telemetry, HTTP/robots/cache, semantic evidence audit, discovery-source and Windows/Codex Unicode regressions plus V1.8 relevance tests.
 
-```text
-44 tests passed
-```
+## V1.8 regressions added
 
-V1.7 adds regression coverage for:
+Validated that:
 
-- enabled-by-default operational broad discovery sources
-- Bundesagentur search-result HTML parsing
-- BA full-time vs student/internship/thesis search-category selection
-- Arbeitnow catalogue fetching once for multiple search queries
-- Germany filtering for the no-key catalogue source
-- per-source query caps and rotating non-anchor queries
+- `Software Engineer, Backend Focused` is rejected as `PURE_SOFTWARE_BACKEND` and receives PRE 0.
+- `mechanical engineer` catalogue search no longer matches a backend role merely because both titles contain `engineer`.
+- `Software Engineer - Simulation` remains eligible because a real simulation bridge exists.
+- `Control Software Engineer - Wind Turbines` remains eligible because control/wind bridges exist.
+- `Finance & Accounting Manager Renewable Energy` is still rejected; an industry keyword cannot rescue a wrong profession.
+- `Mechanical Engineer` without explicit full-time metadata is not accidentally filtered as an unsupported `professional` employment state.
+- Structural Analysis Engineer scores far above a backend software role.
+- Generic `Systems Engineer` requires real mechanical/simulation/validation evidence in the description.
+- Dashboard keeps hard rejects auditable but outside the normal attention list.
 
-All V1.6 regression tests continue to pass, including:
+## Static validation
 
-- TÜV SÜD and Ashby parsing regressions
-- manual-job freshness bypass
-- safe URL schemes
-- request throttling and page cache
-- robots.txt enforcement
-- dashboard feedback validation
-- semantic evidence selection
-- semantic claim-vs-evidence audit
-- Fit vs Priority
-- feedback learning
-- Codex-first provider safety
-- telemetry
+- `python -m compileall` passes for the source tree, `agent.py`, and `vscode_runner.py`.
+- All five sanitized LaTeX CV bases compile successfully and remain 2 pages each.
+- Existing V1.6 semantic evidence/claim-audit code and V1.7.1 UTF-8 Codex subprocess handling are unchanged except for analysis-version refresh to `1.8`.
 
-## Discovery architecture validation
+## Recommended real-world validation
 
-The default configuration now contains two broad sources that do not require the user to provide API credentials:
+Run V1.8 from a fresh folder/database and compare the first discovery cycle with the V1.7 PDF. Expected behavior:
 
-```text
-arbeitsagentur  enabled
-arbeitnow       enabled
-```
-
-Adzuna and Jooble explicitly report unavailable when their credentials are absent; empty Greenhouse/Lever/SmartRecruiters lists explicitly report that no watchlist targets are configured.
-
-Every pipeline run writes `output/discovery_report.json` with per-source attempted/success/result counts and `automatic_discovery_active`.
-
-## Network-safety design
-
-The BA connector:
-
-- dynamically checks robots.txt before search-page requests
-- has a configurable minimum delay and jitter
-- caps queries per run
-- caps results per query
-- uses the shared live-page policy for subsequent detail-page verification
-
-Fresh automatically discovered vacancies with known publication dates proceed to enrichment. Known stale jobs are filtered first, reducing unnecessary page requests.
-
-The release test suite uses mocked provider HTTP data; no mass external scraping was performed during package validation.
-
-## Python validation
-
-All project Python files compile successfully with `py_compile`.
-
-## LaTeX / evidence behavior
-
-V1.7 does not modify the V1.6 document templates or evidence/semantic-audit readiness gate. The previously validated five CV bases and V1.6 claim-trace safeguards are preserved unchanged.
+1. raw discovery can remain broad;
+2. a large fraction of obvious software/business titles should be counted in `title_gate_rejected`;
+3. the main dashboard should be much shorter;
+4. mechanical/CAE/wind/simulation jobs should appear before ambiguous adjacent roles;
+5. hard-rejected titles should not consume Codex calls.

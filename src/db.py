@@ -138,7 +138,16 @@ class Database:
         }
 
     def set_filter_reason(self, fp, reason):
-        self.conn.execute('UPDATE jobs SET filter_reason=?,status=? WHERE fingerprint=?', (reason or '', 'filtered' if reason else 'new', fp))
+        if reason:
+            # A hard-filtered job must not retain a stale PRE/AI score from an older
+            # version/run. This is especially important when V1.8 reclassifies noisy
+            # V1.7 rows such as backend software jobs.
+            self.conn.execute(
+                "UPDATE jobs SET filter_reason=?,status='filtered',match_score=NULL,priority_score=NULL,priority_label='',match_json=NULL WHERE fingerprint=?",
+                (reason, fp),
+            )
+        else:
+            self.conn.execute("UPDATE jobs SET filter_reason='',status=CASE WHEN status='filtered' THEN 'new' ELSE status END WHERE fingerprint=?", (fp,))
         self.conn.commit()
 
     def set_active(self, fp, status):

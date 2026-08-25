@@ -46,7 +46,7 @@ class HttpPolicy:
         self.robots_cache_hours = max(0.0, float(hcfg.get("robots_cache_hours", 12) or 0.0))
         self.max_body_chars = max(50_000, int(hcfg.get("max_cached_body_chars", 750_000) or 750_000))
         self.timeout = max(3, int(hcfg.get("timeout_seconds", 20) or 20))
-        self.user_agent = str(hcfg.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) JobSearchAgent/1.7"))
+        self.user_agent = str(hcfg.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) JobSearchAgent/1.8"))
         self.robots_user_agent = str(hcfg.get("robots_user_agent", "JobSearchAgent"))
         self.cache_file = Path(str(hcfg.get("cache_file", "output/http_cache.json")))
         self.session = requests.Session()

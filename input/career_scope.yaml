@@ -1,4 +1,3 @@
-# V1.4 broad career map. Search broadly; qualification claims remain evidence-based.
 families:
   wind_loads_structures:
     tier: core
@@ -128,12 +127,11 @@ families:
     - projektingenieur wind
     - solarenergie
     queries_en:
-    - renewable energy engineer
+    - renewable energy mechanical engineer
     - project engineer wind energy
-    - project engineer renewable energy
+    - renewable energy project engineer mechanical
     - wind farm engineer
     - solar mechanical engineer
-    - energy systems engineer renewable
     queries_de:
     - Ingenieur Erneuerbare Energien
     - Projektingenieur Windenergie
@@ -160,18 +158,16 @@ families:
     - simulationsingenieur
     - berechnungsautomatisierung
     queries_en:
-    - computational engineer
-    - simulation automation engineer
-    - scientific software engineer engineering
-    - engineering data analyst
-    - digital engineering engineer
-    - Python engineer simulation
+    - mechanical simulation automation engineer
+    - computational mechanical engineer
+    - scientific computing mechanical simulation
+    - engineering simulation Python
+    - digital engineering mechanical simulation
     queries_de:
-    - Computational Engineer
-    - Simulationsingenieur Python
-    - Ingenieur Berechnungsautomatisierung
-    - Engineering Data Analyst
-    - Digital Engineering Ingenieur
+    - Simulationsingenieur Maschinenbau Python
+    - Berechnungsautomatisierung Maschinenbau
+    - Computational Engineer Maschinenbau
+    - Digital Engineering Maschinenbau
   manufacturing_project_engineering:
     tier: adjacent
     label: Manufacturing support & project engineering
@@ -266,13 +262,11 @@ families:
     - systemingenieur
     - forschungsingenieur
     queries_en:
-    - research engineer mechanical
-    - R&D engineer energy
+    - research engineer mechanical systems
+    - R&D engineer mechanical systems
     - systems engineer mechanical
     - systems engineer renewable energy
-    - research engineer simulation
-    - R&D engineer mechanical systems
-    - systems development engineer
+    - research engineer mechanical simulation
     queries_de:
     - Forschungsingenieur Maschinenbau
     - Forschungsingenieur Energietechnik
@@ -356,8 +350,7 @@ families:
     label: Mechanical reliability, vibration & condition-oriented engineering
     evidence:
     - Professional modal/harmonic-response and vibration analysis
-    - Vibration-motor-driven machinery redesign intended to improve reliability and
-      maintenance
+    - Vibration-motor-driven machinery redesign intended to improve reliability and maintenance
     - Structural/dynamic response assessment
     - Machinery development and manufacturing support
     match_keywords:
