@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "purpose": "Verified evidence registry used by Job Search Agent V1.5. These claims are factual boundaries for matching and document generation; they are not a replacement for the source CV files.",
+  "purpose": "Verified evidence registry used by Job Search Agent V1.6. These claims are factual boundaries for matching and document generation; they are not a replacement for the source CV files.",
   "evidence": [
     {
       "id": "EXP_CAE_001",

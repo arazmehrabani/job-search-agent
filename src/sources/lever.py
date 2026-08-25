@@ -7,8 +7,16 @@ from ..utils import strip_html
 
 class LeverSource(JobSource):
     name = "lever"
+    category = "watchlist"
     def __init__(self, sites: list[dict]):
         self.sites = sites or []
+        self._site_cache = {}
+
+    def health(self):
+        ok = bool(self.sites)
+        return {"name": self.name, "category": self.category, "automatic": True,
+                "configured": ok, "operational": ok,
+                "reason": f"{len(self.sites)} site(s)" if ok else "enabled but no sites configured"}
 
     def search(self, query: str, location: str, limit: int = 30) -> list[Job]:
         out = []
@@ -21,10 +29,11 @@ class LeverSource(JobSource):
             region = site_cfg.get("region", "global")
             host = "api.eu.lever.co" if region == "eu" else "api.lever.co"
             url = f"https://{host}/v0/postings/{site}"
-            r = requests.get(url, params={"mode":"json"}, timeout=25)
-            if r.status_code != 200:
-                continue
-            for x in r.json():
+            cache_key = (region, site)
+            if cache_key not in self._site_cache:
+                r = requests.get(url, params={"mode":"json"}, timeout=25)
+                self._site_cache[cache_key] = r.json() if r.status_code == 200 else []
+            for x in self._site_cache.get(cache_key, []):
                 desc = strip_html(" ".join([
                     x.get("descriptionPlain",""),
                     x.get("additionalPlain",""),

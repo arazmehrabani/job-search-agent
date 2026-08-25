@@ -7,8 +7,16 @@ from ..utils import parse_datetime, strip_html
 
 class GreenhouseSource(JobSource):
     name = "greenhouse"
+    category = "watchlist"
     def __init__(self, boards: list[dict]):
         self.boards = boards or []
+        self._board_cache = {}
+
+    def health(self):
+        ok = bool(self.boards)
+        return {"name": self.name, "category": self.category, "automatic": True,
+                "configured": ok, "operational": ok,
+                "reason": f"{len(self.boards)} board(s)" if ok else "enabled but no boards configured"}
 
     def search(self, query: str, location: str, limit: int = 30) -> list[Job]:
         q = (query or "").lower()
@@ -20,10 +28,13 @@ class GreenhouseSource(JobSource):
                 continue
             company = board.get("company", token)
             url = f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs"
-            r = requests.get(url, params={"content": "true"}, timeout=25)
-            if r.status_code != 200:
-                continue
-            for x in r.json().get("jobs", []):
+            if token not in self._board_cache:
+                r = requests.get(url, params={"content": "true"}, timeout=25)
+                if r.status_code != 200:
+                    self._board_cache[token] = []
+                else:
+                    self._board_cache[token] = r.json().get("jobs", [])
+            for x in self._board_cache.get(token, []):
                 title = x.get("title","")
                 xloc = (x.get("location") or {}).get("name","")
                 desc = strip_html(x.get("content",""))

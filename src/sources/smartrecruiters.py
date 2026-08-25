@@ -7,8 +7,15 @@ from ..utils import parse_datetime, strip_html
 
 class SmartRecruitersSource(JobSource):
     name = "smartrecruiters"
+    category = "watchlist"
     def __init__(self, companies: list[dict]):
         self.companies = companies or []
+
+    def health(self):
+        ok = bool(self.companies)
+        return {"name": self.name, "category": self.category, "automatic": True,
+                "configured": ok, "operational": ok,
+                "reason": f"{len(self.companies)} company identifier(s)" if ok else "enabled but no companies configured"}
 
     def search(self, query: str, location: str, limit: int = 30) -> list[Job]:
         out = []

@@ -1,6 +1,6 @@
-# Job Search Agent V1.6
+# Job Search Agent V1.7
 
-V1.6 keeps the V1.5 decision-system architecture and adds the reliability/safety upgrades identified in the latest review: polite page fetching, stronger dashboard input validation, semantic evidence retrieval, and a final semantic claim-vs-evidence audit before an application package can be marked READY.
+V1.7 keeps all V1.6 reliability/evidence safeguards and fixes the biggest practical discovery problem: the agent now has broad, enabled-by-default job discovery that works even when you have not configured Adzuna or Jooble API keys. Every run also reports which sources actually searched and how many jobs each returned.
 
 The design principle remains:
 
@@ -11,6 +11,89 @@ EVALUATE STRICTLY
       ↓
 WRITE TRUTHFULLY
 ```
+
+
+## V1.7 — automatic job discovery
+
+V1.7 no longer treats a list of planned queries as proof that jobs were actually searched. Two broad sources are enabled by default:
+
+```text
+Bundesagentur für Arbeit Jobsuche  -> public Germany-wide search pages
+Arbeitnow                         -> public no-key Europe/DACH job API
+```
+
+Optional sources remain available:
+
+```text
+Adzuna             broad search, requires ADZUNA_APP_ID + ADZUNA_APP_KEY
+Jooble             broad search, requires JOOBLE_API_KEY
+Greenhouse         company watchlist; configure board tokens
+Lever              company watchlist; configure site names
+SmartRecruiters    company watchlist; configure company identifiers
+Email alerts       ingest .eml alerts from LinkedIn/Indeed/XING/StepStone/etc.
+Manual URLs         explicit jobs you want reviewed
+```
+
+The Bundesagentur connector uses a conservative query budget, delays requests to the same host, dynamically checks `robots.txt`, and only follows fresh search results into the expensive live-page/enrichment stage. Arbeitnow downloads a few catalogue pages once per run and matches all selected career queries locally rather than making one API request per query.
+
+### Source transparency
+
+Run:
+
+```powershell
+python agent.py sources
+
+# optional: actually perform one lightweight live test per broad source
+python agent.py sources --test
+```
+
+You should see something similar to:
+
+```text
+OK  arbeitsagentur    broad      public Jobsuche HTML; max 14 queries/run
+OK  arbeitnow         broad      public API, no key; 3 page(s) per run
+--- adzuna            broad      ADZUNA_APP_ID / ADZUNA_APP_KEY missing
+--- jooble            broad      JOOBLE_API_KEY missing
+--- greenhouse        watchlist  enabled but no boards configured
+--- lever             watchlist  enabled but no sites configured
+--- smartrecruiters   watchlist  enabled but no companies configured
+OK  manual            manual     ... manual URL(s)
+OK  email_alert       inbox      ... .eml alert file(s)
+
+Automatic broad discovery: CONFIGURED
+```
+
+After every run, V1.7 writes:
+
+```text
+output/discovery_report.json
+```
+
+The dashboard also shows **Auto discovery: ACTIVE/OFF**, raw discovered count, and an expandable source-health section. If no broad source successfully completes, the run emits an explicit `AUTOMATIC JOB SEARCH IS NOT ACTIVE` warning instead of silently showing only manual URLs.
+
+### Search coverage and rate control
+
+V1.7 keeps the 32-query career plan, but network sources can use a smaller per-source budget. Core anchor queries are retained and the remaining queries rotate between runs. This avoids sending all 32 searches to every provider every 30 minutes.
+
+The default BA configuration is:
+
+```yaml
+sources:
+  arbeitsagentur:
+    enabled: true
+    max_queries_per_run: 14
+    anchor_queries_per_run: 8
+    results_per_query: 8
+    min_delay_seconds: 1.5
+    respect_robots_txt: true
+
+  arbeitnow:
+    enabled: true
+    pages: 3
+    max_results_per_run: 120
+```
+
+The search anchors now also include working-student/internship/thesis queries so discovery is not limited to professional full-time roles.
 
 ## What V1.6 changes
 
@@ -205,7 +288,7 @@ Use your existing Conda environment:
 
 ```powershell
 conda activate agent
-cd C:\Users\YOUR_USER\Desktop\job_search_agent_v1_6
+cd C:\Users\YOUR_USER\Desktop\job_search_agent_v1_7
 pip install -r requirements.txt
 python agent.py doctor
 ```
@@ -324,7 +407,7 @@ Feedback can make a small bounded adjustment to future **Priority** in the same 
 
 ## Migration from V1.5.1
 
-The safest setup is a new V1.6 folder. Copy only local data you want to keep, for example:
+The safest setup is a new V1.7 folder. Copy only local data you want to keep, for example:
 
 ```text
 .env

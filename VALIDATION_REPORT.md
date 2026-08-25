@@ -1,4 +1,4 @@
-# Job Search Agent V1.6 — Validation Report
+# Job Search Agent V1.7 — Validation Report
 
 Validation date: 2026-08-14
 
@@ -13,69 +13,64 @@ python -m unittest discover -s tests -p "test*.py" -v
 Result:
 
 ```text
-39 tests passed
+44 tests passed
 ```
 
-The suite retains V1.4/V1.5 regression coverage and adds V1.6 checks for:
+V1.7 adds regression coverage for:
 
-- HTTP/HTTPS-only URL policy
-- database rejection of unsafe URL schemes
-- dashboard non-rendering of unsafe `javascript:` links
-- feedback payload validation
-- per-host request throttling
-- persistent page caching
-- robots.txt disallow handling
-- semantic evidence selection beyond lexical overlap
-- semantic claim-vs-evidence rejection of an overstatement (`supported` → `led`)
-- contextual German-language risk affecting application priority softly
+- enabled-by-default operational broad discovery sources
+- Bundesagentur search-result HTML parsing
+- BA full-time vs student/internship/thesis search-category selection
+- Arbeitnow catalogue fetching once for multiple search queries
+- Germany filtering for the no-key catalogue source
+- per-source query caps and rotating non-anchor queries
 
-Existing regressions still cover:
+All V1.6 regression tests continue to pass, including:
 
-- TÜV SÜD SuccessFactors title/company/location extraction
-- real TÜV portal boilerplate not becoming the company name
-- `international` not becoming `internship`
-- `fluent in German` detection
-- `German advantageous` remaining preferred rather than required
-- Ashby enrichment and source IDs
-- tracking URL canonicalization/deduplication
-- manual vacancy age bypass
-- old automatically discovered vacancy filtering
-- Fit vs Priority separation
+- TÜV SÜD and Ashby parsing regressions
+- manual-job freshness bypass
+- safe URL schemes
+- request throttling and page cache
+- robots.txt enforcement
+- dashboard feedback validation
+- semantic evidence selection
+- semantic claim-vs-evidence audit
+- Fit vs Priority
 - feedback learning
 - Codex-first provider safety
-- AI usage telemetry
-- evidence retrieval for wind-load roles
-- identity-line protection
+- telemetry
+
+## Discovery architecture validation
+
+The default configuration now contains two broad sources that do not require the user to provide API credentials:
+
+```text
+arbeitsagentur  enabled
+arbeitnow       enabled
+```
+
+Adzuna and Jooble explicitly report unavailable when their credentials are absent; empty Greenhouse/Lever/SmartRecruiters lists explicitly report that no watchlist targets are configured.
+
+Every pipeline run writes `output/discovery_report.json` with per-source attempted/success/result counts and `automatic_discovery_active`.
+
+## Network-safety design
+
+The BA connector:
+
+- dynamically checks robots.txt before search-page requests
+- has a configurable minimum delay and jitter
+- caps queries per run
+- caps results per query
+- uses the shared live-page policy for subsequent detail-page verification
+
+Fresh automatically discovered vacancies with known publication dates proceed to enrichment. Known stale jobs are filtered first, reducing unnecessary page requests.
+
+The release test suite uses mocked provider HTTP data; no mass external scraping was performed during package validation.
 
 ## Python validation
 
 All project Python files compile successfully with `py_compile`.
 
-## LaTeX validation
+## LaTeX / evidence behavior
 
-All five sanitized working CV bases compile successfully with `pdflatex`:
-
-```text
-mechanical_de_master.tex   2 pages
-mechanical_en_master.tex   2 pages
-wind_de_master.tex         2 pages
-wind_en_master.tex         2 pages
-wind_thesis_en_master.tex  2 pages
-```
-
-## V1.6 readiness gate
-
-For generated application packages with the default configuration, READY now requires:
-
-1. AI/Codex document generation succeeded.
-2. Required language tailoring checks passed.
-3. Valid evidence IDs exist for CV and cover letter.
-4. Material claim traces exist for both CV and cover letter.
-5. Semantic claim-vs-evidence audit passes.
-6. Required PDFs compile when PDF compilation is enabled.
-
-A semantic-audit failure or unsupported major claim produces a review package instead of READY.
-
-## Network policy notes
-
-The V1.6 HTTP layer includes request throttling, page cache, retry/backoff, Retry-After handling and robots.txt checks. Unit tests use mocked HTTP responses; the release validation did not mass-fetch external career sites.
+V1.7 does not modify the V1.6 document templates or evidence/semantic-audit readiness gate. The previously validated five CV bases and V1.6 claim-trace safeguards are preserved unchanged.

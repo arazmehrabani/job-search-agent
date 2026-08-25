@@ -23,10 +23,23 @@ def _score_class(v: int) -> str:
     return "score-high" if v >= 82 else ("score-mid" if v >= 68 else "score-low")
 
 
+def _discovery_meta(path: str = "output/discovery_report.json") -> dict:
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
 def build_dashboard(db: Database, output="output/dashboard.html", feedback_token: str = ""):
     rows = db.top_jobs(300)
     stats = db.stats()
     usage = db.usage_stats(1)
+    discovery = _discovery_meta()
+    auto_active = bool(discovery.get("automatic_discovery_active", False))
+    source_rows = discovery.get("sources", []) or []
+    broad_names = [x.get("name") for x in source_rows if x.get("category") == "broad" and x.get("success")]
+    discovery_text = "ACTIVE" if auto_active else "OFF"
+    discovery_note = ", ".join(str(x) for x in broad_names) if broad_names else str(discovery.get("warning") or "no successful broad source yet")
     trs = []
     heuristic_count = ai_count = screen_count = 0
 
@@ -133,14 +146,18 @@ a{{color:var(--link);text-decoration:none;font-weight:650}} a:hover{{text-decora
 details{{margin-top:6px;color:var(--muted);font-size:10.5px}} summary{{cursor:pointer;color:#536170}} .fitgrid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:3px 10px;margin:5px 0}} .reason{{margin-top:4px;line-height:1.35}}
 .decision-current{{font-weight:700;font-size:11px}} .decision-buttons{{display:flex;gap:3px;margin-top:5px;flex-wrap:wrap}} .decision-buttons button{{border:1px solid #d6dbe1;background:#fff;border-radius:5px;padding:3px 5px;font-size:9px;cursor:pointer}} .decision-buttons button:hover{{background:#f0f4f8}} .decision-buttons.disabled button{{opacity:.35;cursor:not-allowed}} .outcome{{display:inline-block;margin:0;font-size:9px}} .outcome summary{{display:inline;cursor:pointer;color:#68707a}} .outcome button{{margin-top:3px}}
 tr:hover td{{background:#fbfcfd}} @media(max-width:900px){{.shell{{padding:13px}}}}
-</style></head><body><div class="shell"><h1>Job Search Agent V1.6</h1>
+</style></head><body><div class="shell"><h1>Job Search Agent V1.7</h1>
 <p class="note"><b>Fit</b> = evidence match. <b>Priority</b> = whether the opportunity is worth your attention after language, freshness, career tier and feedback. PRE = local heuristic, SCREEN = compact AI screening, AI = deep Codex/API match. Feedback buttons work when opened through <code>python agent.py serve</code>.</p>
 <div class="cards">
+<div class="card"><b>Auto discovery</b><div class="n">{discovery_text}</div><div class="sub" title="{_esc(discovery_note)}">{_esc(discovery_note[:58])}</div></div>
+<div class="card"><b>Raw discovered</b><div class="n">{discovery.get('raw_results',0) or 0}</div></div>
 <div class="card"><b>Total</b><div class="n">{stats.get('total',0)}</div></div><div class="card"><b>Active</b><div class="n">{stats.get('active',0) or 0}</div></div>
 <div class="card"><b>High priority</b><div class="n">{stats.get('high_priority',0) or 0}</div></div><div class="card"><b>Ready packages</b><div class="n">{stats.get('packages',0) or 0}</div></div>
 <div class="card"><b>Your decisions</b><div class="n">{stats.get('feedback_count',0) or 0}</div></div><div class="card"><b>AI calls today</b><div class="n">{usage.get('calls',0) or 0}</div></div>
 <div class="card"><b>Approx tokens today</b><div class="n">{token_total:,}</div></div><div class="card"><b>API cost*</b><div class="n">{cost_text}</div></div>
 </div>
+<details style="margin:0 0 12px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px 11px"><summary><b>Discovery source health</b></summary>
+<div style="margin-top:7px">{''.join(f"<div><b>{_esc(x.get('name'))}</b> — {_esc(x.get('category'))} — {'OK' if x.get('success') else ('READY' if x.get('operational') else 'OFF')} — {_esc(x.get('results',0))} result(s) — {_esc(x.get('error') or x.get('reason') or '')}</div>" for x in source_rows)}</div></details>
 <div class="tablewrap"><table><thead><tr><th>Fit</th><th>Priority</th><th>Role</th><th>Company</th><th>Location</th><th>Lang</th><th>Employment</th><th>German req.</th><th>Career family</th><th>Your decision</th><th>Source CV</th><th>Date</th><th>Source</th><th>Live</th><th>Status</th></tr></thead><tbody>{''.join(trs)}</tbody></table></div>
 <p class="note" style="margin-top:10px">*API cost is shown only if you explicitly configured current per-million-token rates. Codex/ChatGPT plan calls show approximate token volume, not a dollar billing amount.</p>
 </div>

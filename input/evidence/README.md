@@ -1,6 +1,6 @@
 # Evidence Registry
 
-`evidence.json` is the verified claim registry used by V1.5 for retrieval, deep matching and document traceability.
+`evidence.json` is the verified claim registry used by V1.7 for retrieval, deep matching and document traceability.
 
 Rules:
 

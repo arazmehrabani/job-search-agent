@@ -7,6 +7,9 @@ search:
   - FEA engineer
   - simulation engineer
   - development engineer
+  - Werkstudent Maschinenbau
+  - Werkstudent Windenergie
+  - working student engineering
   - product development engineer
   - renewable energy engineer
   - project engineer renewable energy
@@ -15,6 +18,8 @@ search:
   - Entwicklungsingenieur
   - Konstruktionsingenieur
   - Ingenieur Erneuerbare Energien
+  - Praktikum Maschinenbau
+  - Masterarbeit Windenergie
   broader_queries: []
   career_scope_file: input/career_scope.yaml
   use_career_scope: true
@@ -38,7 +43,6 @@ search:
   results_per_source: 25
   verify_live_page: true
 http:
-  # Polite live-page verification for arbitrary career pages (official source APIs are separate).
   min_delay_per_host_seconds: 1.5
   delay_jitter_seconds: 0.25
   max_retries: 2
@@ -52,7 +56,6 @@ http:
   robots_cache_hours: 12
   max_cached_body_chars: 750000
   robots_user_agent: JobSearchAgent
-
 preferences:
   required_title_keywords: []
   excluded_title_keywords:
@@ -121,10 +124,31 @@ ai:
     deep_evidence_limit: 16
     manual_force_screen: true
 sources:
+  arbeitsagentur:
+    enabled: true
+    max_queries_per_run: 14
+    anchor_queries_per_run: 8
+    timeout_seconds: 25
+    min_delay_seconds: 1.5
+    delay_jitter_seconds: 0.25
+    respect_robots_txt: true
+    robots_fail_open: true
+    user_agent: JobSearchAgent/1.7
+    results_per_query: 8
+  arbeitnow:
+    enabled: true
+    pages: 3
+    max_results_per_run: 120
+    timeout_seconds: 25
+    results_per_query: 25
   adzuna:
     enabled: true
+    max_queries_per_run: 16
+    anchor_queries_per_run: 8
   jooble:
     enabled: true
+    max_queries_per_run: 16
+    anchor_queries_per_run: 8
   greenhouse:
     enabled: true
     boards: []
@@ -134,6 +158,8 @@ sources:
   smartrecruiters:
     enabled: true
     companies: []
+    max_queries_per_run: 14
+    anchor_queries_per_run: 8
   manual_links:
     enabled: true
     file: input/manual_jobs.txt

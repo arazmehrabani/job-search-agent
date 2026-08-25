@@ -10,7 +10,7 @@ from pathlib import Path
 
 from src.config import load_config
 from src.db import Database
-from src.pipeline import run_pipeline
+from src.pipeline import run_pipeline, build_sources
 from src.ai import AIEngine
 from src.dashboard import build_dashboard
 from src.dashboard_server import serve_dashboard
@@ -44,6 +44,16 @@ def doctor(cfg, network: bool = False):
     add("OPENAI_API_KEY", bool(os.getenv("OPENAI_API_KEY")), "optional; ignored unless provider=openai_api")
     add("ADZUNA keys", bool(os.getenv("ADZUNA_APP_ID") and os.getenv("ADZUNA_APP_KEY")), "optional")
     add("JOOBLE_API_KEY", bool(os.getenv("JOOBLE_API_KEY")), "optional")
+
+    source_health = []
+    try:
+        source_health = [src.health() for src in build_sources(cfg)]
+        broad_ready = [x["name"] for x in source_health if x.get("category") == "broad" and x.get("operational")]
+        add("Broad discovery", bool(broad_ready), ", ".join(broad_ready) if broad_ready else "NO operational broad source")
+        for sh in source_health:
+            add("Source: " + str(sh.get("name")), bool(sh.get("operational")), sh.get("reason", ""))
+    except Exception as exc:
+        add("Discovery sources", False, exc)
 
     latex = shutil.which("latexmk") or shutil.which("pdflatex")
     add("LaTeX compiler", bool(latex), latex or "needed for PDF packages")
@@ -94,15 +104,16 @@ def doctor(cfg, network: bool = False):
             add("Internet connectivity", r.status_code < 500, f"HTTP {r.status_code}")
         except Exception as exc: add("Internet connectivity", False, exc)
 
-    print("\nJob Search Agent V1.6 — doctor\n")
+    print("\nJob Search Agent V1.7 — doctor\n")
     for name, ok, note in checks:
         print(f"{'OK ' if ok else '---'} {name:22} {note}")
-    failures = [x for x in checks if not x[1] and x[0] not in {"OPENAI_API_KEY", "ADZUNA keys", "JOOBLE_API_KEY", "Git", "pdfinfo", "Codex CLI"}]
+    optional_names = {"OPENAI_API_KEY", "ADZUNA keys", "JOOBLE_API_KEY", "Git", "pdfinfo", "Codex CLI"}
+    failures = [x for x in checks if not x[1] and x[0] not in optional_names and not x[0].startswith("Source:")]
     return not failures
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Personal Job Search Agent V1.6")
+    ap = argparse.ArgumentParser(description="Personal Job Search Agent V1.7")
     ap.add_argument("--config", default="config.yaml")
     sub = ap.add_subparsers(dest="command", required=True)
     r = sub.add_parser("run", help="Search, verify, rank and prepare application packages")
@@ -119,6 +130,8 @@ def main():
     f.add_argument("--reason", default="")
     s = sub.add_parser("serve", help="Serve interactive dashboard with feedback buttons")
     s.add_argument("--port", type=int, default=8765)
+    srcp = sub.add_parser("sources", help="Show which discovery sources are actually operational")
+    srcp.add_argument("--test", action="store_true", help="Perform one lightweight live query against each operational broad source")
     args = ap.parse_args()
     cfg = load_config(args.config)
 
@@ -126,6 +139,27 @@ def main():
         serve_dashboard(db_path(), port=args.port, open_browser=True); return
     if args.command == "doctor":
         doctor(cfg, network=args.network); return
+    if args.command == "sources":
+        print("\nJob Search Agent V1.7 — source status\n")
+        broad = 0
+        live_ok = 0
+        for src in build_sources(cfg):
+            sh = src.health()
+            ok = bool(sh.get("operational"))
+            if ok and sh.get("category") == "broad": broad += 1
+            suffix = ""
+            if getattr(args, "test", False) and ok and sh.get("category") == "broad":
+                try:
+                    rows = src.search_many(["CAE engineer"], ["Germany"], 3)
+                    live_ok += 1
+                    suffix = f" | LIVE OK, {len(rows)} result(s)"
+                except Exception as exc:
+                    suffix = f" | LIVE FAILED: {exc}"
+            print(f"{'OK ' if ok else '---'} {sh.get('name', src.name):18} {sh.get('category',''):10} {sh.get('reason','')}{suffix}")
+        print("\nAutomatic broad discovery:", "CONFIGURED" if broad else "NOT CONFIGURED")
+        if getattr(args, "test", False):
+            print("Live broad sources:", f"{live_ok}/{broad}")
+        return
 
     db = Database(db_path())
     try:

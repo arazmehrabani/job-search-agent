@@ -12,8 +12,15 @@ URL_RE = re.compile(r'https?://[^\s<>"\']+')
 
 class EmailAlertFilesSource(JobSource):
     name = "email_alert"
+    category = "inbox"
     def __init__(self, directory: str):
         self.directory=Path(directory)
+
+    def health(self):
+        count = len(list(self.directory.glob("*.eml"))) if self.directory.exists() else 0
+        return {"name": self.name, "category": self.category, "automatic": True,
+                "configured": self.directory.exists(), "operational": self.directory.exists(),
+                "reason": f"{count} .eml alert file(s)" if self.directory.exists() else "alert directory missing"}
 
     def search(self, query: str, location: str, limit: int=30) -> list[Job]:
         if not self.directory.exists():

@@ -7,6 +7,7 @@ from ..utils import parse_datetime, strip_html
 
 class AdzunaSource(JobSource):
     name = "adzuna"
+    category = "broad"
     def __init__(self, country="de"):
         self.country = country
         self.app_id = os.getenv("ADZUNA_APP_ID", "")
@@ -14,6 +15,12 @@ class AdzunaSource(JobSource):
 
     def available(self):
         return bool(self.app_id and self.app_key)
+
+    def health(self):
+        ok = self.available()
+        return {"name": self.name, "category": self.category, "automatic": True,
+                "configured": ok, "operational": ok,
+                "reason": "ready" if ok else "ADZUNA_APP_ID / ADZUNA_APP_KEY missing"}
 
     def search(self, query: str, location: str, limit: int = 30) -> list[Job]:
         if not self.available():

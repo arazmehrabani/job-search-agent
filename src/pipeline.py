@@ -5,6 +5,8 @@ from pathlib import Path
 from .models import MatchResult
 from .db import Database
 from .sources.adzuna import AdzunaSource
+from .sources.arbeitsagentur import ArbeitsagenturSource
+from .sources.arbeitnow import ArbeitnowSource
 from .sources.jooble import JoobleSource
 from .sources.greenhouse import GreenhouseSource
 from .sources.lever import LeverSource
@@ -42,6 +44,8 @@ def build_sources(cfg: dict):
     scfg = cfg.get("sources", {})
     country = cfg.get("search", {}).get("country", "de")
     out = []
+    if scfg.get("arbeitsagentur", {}).get("enabled", False): out.append(ArbeitsagenturSource(scfg.get("arbeitsagentur", {})))
+    if scfg.get("arbeitnow", {}).get("enabled", False): out.append(ArbeitnowSource(scfg.get("arbeitnow", {})))
     if scfg.get("adzuna", {}).get("enabled", False): out.append(AdzunaSource(country))
     if scfg.get("jooble", {}).get("enabled", False): out.append(JoobleSource())
     if scfg.get("greenhouse", {}).get("enabled", False): out.append(GreenhouseSource(scfg.get("greenhouse", {}).get("boards", [])))
@@ -136,6 +140,36 @@ def _document_evidence(job, match: MatchResult, registry: list[dict], cfg: dict)
     return chosen[:limit]
 
 
+def _source_queries(queries: list[str], src_name: str, source_cfg: dict) -> list[str]:
+    """Keep a small anchor set every cycle and rotate the remaining queries per source."""
+    cap = int(source_cfg.get("max_queries_per_run", 0) or 0)
+    if cap <= 0 or cap >= len(queries):
+        return list(queries)
+    anchor_count = min(int(source_cfg.get("anchor_queries_per_run", max(2, cap // 2)) or 0), cap, len(queries))
+    anchors = list(queries[:anchor_count])
+    pool = list(queries[anchor_count:])
+    slots = cap - len(anchors)
+    if slots <= 0 or not pool:
+        return anchors[:cap]
+    state_path = Path("output/source_query_rotation.json")
+    state = {}
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception:
+        state = {}
+    start = int((state.get(src_name) or {}).get("next_index", 0) or 0) % len(pool)
+    rotated = [pool[(start + i) % len(pool)] for i in range(slots)]
+    state[src_name] = {"next_index": (start + slots) % len(pool)}
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    return anchors + rotated
+
+
+def _write_discovery_report(report: dict, path: str = "output/discovery_report.json") -> None:
+    p = Path(path); p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
     profile = load_profile(cfg.get("documents", {}).get("profile", "input/profile.json"))
     db.configure_telemetry(cfg)
@@ -155,13 +189,45 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
     feedback_adjustments = family_feedback_adjustments(db, cfg)
 
     found, errors = [], []
+    source_reports = []
+    source_cfg_all = cfg.get("sources", {}) or {}
     for src in sources:
-        pairs = [("", "")] if src.name in ("manual", "email_alert") else [(q, l) for q in queries for l in locations]
-        for q, loc in pairs:
-            try:
-                found.extend(src.search(q, loc, limit))
-            except Exception as exc:
-                errors.append(f"{src.name}: {exc}")
+        health = src.health() if hasattr(src, "health") else {"name": src.name, "category": "unknown", "automatic": True, "configured": True, "operational": True, "reason": "ready"}
+        rep = dict(health)
+        rep.update({"attempted": False, "success": False, "queries_used": 0, "results": 0, "error": ""})
+        if not health.get("operational", True):
+            source_reports.append(rep)
+            continue
+        sc = source_cfg_all.get(src.name, {}) or {}
+        src_limit = int(sc.get("results_per_query", limit) or limit)
+        try:
+            rep["attempted"] = True
+            if src.name in ("manual", "email_alert"):
+                src_results = src.search("", "", src_limit)
+                rep["queries_used"] = 0
+            else:
+                qset = _source_queries(queries, src.name, sc)
+                rep["queries_used"] = len(qset)
+                src_results = src.search_many(qset, locations, src_limit)
+            found.extend(src_results)
+            rep["results"] = len(src_results)
+            rep["success"] = True
+        except Exception as exc:
+            rep["error"] = str(exc)
+            errors.append(f"{src.name}: {exc}")
+        source_reports.append(rep)
+
+    broad_success = [x for x in source_reports if x.get("category") == "broad" and x.get("automatic") and x.get("success")]
+    auto_discovery_active = bool(broad_success)
+    discovery_report = {
+        "version": "1.7",
+        "automatic_discovery_active": auto_discovery_active,
+        "planned_queries": len(queries),
+        "sources": source_reports,
+        "raw_results": len(found),
+        "warning": "" if auto_discovery_active else "AUTOMATIC JOB SEARCH IS NOT ACTIVE: no broad discovery source completed successfully.",
+    }
+    _write_discovery_report(discovery_report)
 
     seen, unique = set(), []
     for job in found:
@@ -178,6 +244,15 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
     candidates = []
     parse_failures = []
     for job in unique:
+        # Do not download obviously stale automatically-discovered detail pages.
+        # Manual URLs intentionally bypass this freshness shortcut.
+        pre_age = age_days(job)
+        max_age = cfg.get("search", {}).get("max_age_days", 7)
+        if job.source != "manual" and pre_age is not None and pre_age > max_age:
+            fp = db.upsert_job(job)
+            db.set_active(fp, "unknown")
+            db.set_filter_reason(fp, f"older than {max_age} days")
+            continue
         if verify:
             active, job = page_checker.check_and_enrich(job)
         else:
@@ -327,6 +402,10 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
     return {
         "ai_backend": ai.backend_name(),
         "queries_this_cycle": len(queries),
+        "automatic_discovery_active": auto_discovery_active,
+        "discovery_warning": discovery_report.get("warning", ""),
+        "source_report": source_reports,
+        "discovery_report": "output/discovery_report.json",
         "raw_found": len(found),
         "unique": len(unique),
         "eligible_after_filters": len(candidates),

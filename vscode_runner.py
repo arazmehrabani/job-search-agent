@@ -1,8 +1,8 @@
 # %% [markdown]
-# JOB SEARCH AGENT V1.6 — VS CODE / CONDA RUNNER
+# JOB SEARCH AGENT V1.7 — VS CODE / CONDA RUNNER
 #
 # Select the Conda interpreter named `agent`, then run cells with Shift+Enter.
-# V1.6 adds polite/cached page checks, semantic evidence selection, claim-vs-evidence auditing,
+# V1.7 adds polite/cached page checks, semantic evidence selection, claim-vs-evidence auditing,
 # safer dashboard feedback handling, Fit vs Priority, feedback learning and tiered AI.
 
 # %% SETUP — Shift+Enter
@@ -19,7 +19,7 @@ os.chdir(PROJECT_ROOT)
 
 from src.config import load_config
 from src.db import Database
-from src.pipeline import run_pipeline
+from src.pipeline import run_pipeline, build_sources
 from src.dashboard import build_dashboard
 from src.dashboard_server import serve_dashboard
 from src.digest import build_digest
@@ -42,7 +42,7 @@ def run_once(dry_run: bool = False):
     db = Database(DB_FILE)
     try:
         backend = AIEngine(cfg).backend_name()
-        print(f"\n=== Job Agent V1.6 | AI backend: {backend} | dry_run={dry_run} ===")
+        print(f"\n=== Job Agent V1.7 | AI backend: {backend} | dry_run={dry_run} ===")
         result = run_pipeline(cfg, db, dry_run=dry_run)
         dashboard = build_dashboard(db)
         digest = build_digest(db, min_priority=int(cfg.get("notifications", {}).get("digest_priority_min", 68)))
@@ -105,6 +105,21 @@ print("Feedback learning:", cfg.get("feedback", {}))
 print("HTTP policy:", cfg.get("http", {}))
 print("Semantic evidence selection:", cfg.get("evidence", {}).get("semantic_selection", {}))
 print("Semantic claim audit:", cfg.get("evidence", {}).get("semantic_audit", {}))
+print("Discovery sources:")
+broad_ready = 0
+for src in build_sources(cfg):
+    sh = src.health()
+    ok = bool(sh.get("operational"))
+    if ok and sh.get("category") == "broad": broad_ready += 1
+    print(f"  {'OK ' if ok else '---'} {sh.get('name', src.name):18} {sh.get('category',''):10} {sh.get('reason','')}")
+print("Automatic broad discovery:", "CONFIGURED" if broad_ready else "NOT CONFIGURED")
+
+# %% SOURCE STATUS — Shift+Enter
+# Shows configured discovery sources without making network calls.
+for src in build_sources(cfg):
+    sh = src.health()
+    print(f"{'OK ' if sh.get('operational') else '---'} {sh.get('name', src.name):18} {sh.get('category',''):10} {sh.get('reason','')}")
+print("For a live connectivity test, run in the VS Code terminal: python agent.py sources --test")
 
 # %% PREVIEW SEARCH QUERIES — Shift+Enter
 profile = json.loads(Path(cfg["documents"]["profile"]).read_text(encoding="utf-8"))
