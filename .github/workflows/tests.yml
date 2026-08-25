@@ -22,14 +22,15 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - name: Install LaTeX toolchain
+      - name: Install LaTeX and PDF toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             latexmk \
             texlive-latex-extra \
             texlive-fonts-recommended \
-            texlive-lang-german
+            texlive-lang-german \
+            poppler-utils
 
       - name: Install Python dependencies
         run: |
