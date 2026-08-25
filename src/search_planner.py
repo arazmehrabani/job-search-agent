@@ -5,7 +5,7 @@ from pathlib import Path
 
 from .ai import AIEngine
 from .career import load_career_scope
-from .cv_sources import combined_cv_text
+from .evidence import load_evidence_registry, evidence_payload
 
 
 def _dedupe(items):
@@ -24,12 +24,13 @@ def _load_ai_queries(cfg: dict, profile: dict, ai: AIEngine) -> list[str]:
     scfg = cfg.get("search", {})
     if not scfg.get("auto_from_cv", False) or not ai.enabled:
         return []
-    cvs = combined_cv_text(cfg)
-    if not cvs.strip():
+    registry = load_evidence_registry(cfg.get("evidence", {}).get("registry", "input/evidence/evidence.json"))
+    if not registry:
         return []
+    evidence_items = evidence_payload(registry)
     max_auto = int(scfg.get("max_auto_queries", 14))
     broad = bool(scfg.get("broad_search", True))
-    sig_src = json.dumps(profile, sort_keys=True, ensure_ascii=False) + cvs + str(broad) + str(max_auto)
+    sig_src = json.dumps(profile, sort_keys=True, ensure_ascii=False) + json.dumps(evidence_items, sort_keys=True, ensure_ascii=False) + str(broad) + str(max_auto)
     sig = hashlib.sha256(sig_src.encode("utf-8")).hexdigest()
     cache = Path("output/auto_cv_queries.json")
     try:
@@ -38,7 +39,7 @@ def _load_ai_queries(cfg: dict, profile: dict, ai: AIEngine) -> list[str]:
             return list(obj.get("queries", []) or [])
     except Exception:
         pass
-    queries = ai.suggest_search_queries(cvs, profile, broad=broad, limit=max_auto)
+    queries = ai.suggest_search_queries(evidence_items, profile, broad=broad, limit=max_auto)
     cache.parent.mkdir(parents=True, exist_ok=True)
     cache.write_text(
         json.dumps({"signature": sig, "queries": queries}, ensure_ascii=False, indent=2),

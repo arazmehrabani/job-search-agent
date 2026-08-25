@@ -248,5 +248,91 @@ class CoreTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("older than", reason)
 
+
+
+class V15Tests(unittest.TestCase):
+    def test_verified_evidence_retrieval_for_wind_loads(self):
+        from src.evidence import retrieve_evidence
+        cfg = load_config("config.yaml")
+        job = Job(
+            "manual", "6328", "Wind Energy Engineer - Specialist in Load Simulation",
+            "TÜV SÜD", "München", "https://x",
+            description="aeroelastic load calculations for onshore and offshore wind turbines using FAST/OpenFAST and IEC standards",
+        )
+        items = retrieve_evidence(job, cfg, "wind_loads_structures", limit=12)
+        ids = {x["id"] for x in items}
+        self.assertIn("WIND_LOAD_001", ids)
+        self.assertIn("WIND_LOAD_002", ids)
+        self.assertLessEqual(len(items), 12)
+
+    def test_fit_and_priority_are_separate(self):
+        from src.models import MatchResult
+        from src.priority import compute_priority
+        cfg = load_config("config.yaml")
+        job = Job("manual", "1", "Wind Load Engineer", "A", "München, Germany", "https://x")
+        m = MatchResult(
+            score=90, recommendation="APPLY", technical_fit=95, experience_fit=88,
+            language_fit=35, education_fit=95, german_requirement="c1_plus_or_fluent",
+            career_family="wind_loads_structures", career_tier="core", job_language="en",
+            career_stage="professional", schedule="full_time", contract="regular",
+        )
+        out = compute_priority(job, m, cfg, None)
+        self.assertEqual(out.score, 90)
+        self.assertLess(out.priority_score, out.score)
+        self.assertTrue(any("German" in x for x in out.decision_reasons))
+
+    def test_feedback_can_learn_career_preference(self):
+        from src.priority import feedback_adjustment
+        with tempfile.TemporaryDirectory() as td:
+            db = Database(str(Path(td) / "x.db"))
+            for i in range(5):
+                db.record_feedback(f"fp{i}", "APPLY", career_family="cae_structural_dynamics")
+            adj, reason = feedback_adjustment(db, "cae_structural_dynamics", minimum_samples=5, maximum_adjustment=8)
+            self.assertGreater(adj, 0)
+            self.assertIn("5 prior decision", reason)
+            db.close()
+
+    def test_codex_default_does_not_silently_use_openai_api(self):
+        import os
+        from src.ai import AIEngine
+        cfg = load_config("config.yaml")
+        cfg["ai"]["provider"] = "codex_cli"
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "fake-key"}, clear=False), patch("src.ai.find_codex_executable", return_value=""):
+            ai = AIEngine(cfg)
+            self.assertEqual(ai.backend_name(), "heuristic")
+
+    def test_ai_usage_telemetry_storage(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = Database(str(Path(td) / "x.db"))
+            db.configure_telemetry({"telemetry": {"openai_input_cost_per_million_usd": 1.0, "openai_output_cost_per_million_usd": 2.0}})
+            db.record_ai_usage(
+                provider="openai_api", model="test", operation="job_match",
+                input_tokens=1000, output_tokens=500, input_chars=4000, output_chars=2000,
+                duration_seconds=1.2, success=True,
+            )
+            stats = db.usage_stats()
+            self.assertEqual(stats["calls"], 1)
+            self.assertEqual(stats["input_tokens"], 1000)
+            self.assertGreater(stats["estimated_cost_usd"], 0)
+            db.close()
+
+    def test_dashboard_contains_fit_priority_and_feedback(self):
+        from src.models import MatchResult
+        from src.dashboard import build_dashboard
+        with tempfile.TemporaryDirectory() as td:
+            db = Database(str(Path(td) / "x.db"))
+            j = Job("manual", "1", "CAE Engineer", "ACME", "Berlin, Germany", "https://x")
+            fp = db.upsert_job(j)
+            db.set_active(fp, "active")
+            m = MatchResult(score=82, recommendation="APPLY", priority_score=88, priority_label="HIGH", source="heuristic")
+            db.set_match(fp, m)
+            out = Path(td) / "dash.html"
+            build_dashboard(db, str(out))
+            text = out.read_text(encoding="utf-8")
+            self.assertIn("Fit", text)
+            self.assertIn("Priority", text)
+            self.assertIn("sendFeedback", text)
+            db.close()
+
 if __name__ == "__main__":
     unittest.main()

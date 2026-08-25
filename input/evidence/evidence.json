@@ -1,0 +1,322 @@
+{
+  "version": "1.0",
+  "purpose": "Verified evidence registry used by Job Search Agent V1.5. These claims are factual boundaries for matching and document generation; they are not a replacement for the source CV files.",
+  "evidence": [
+    {
+      "id": "EXP_CAE_001",
+      "category": "professional_experience",
+      "claim": "Performed static structural analyses in ANSYS Workbench to assess stress and deformation of mechanical components and structural assemblies.",
+      "source": ["mechanical_en", "mechanical_de", "wind_thesis_en"],
+      "period": "2017-2023 professional experience",
+      "keywords": ["ANSYS", "FEA", "FEM", "static structural", "stress", "deformation", "structural analysis"],
+      "tags": ["cae_structural_dynamics", "test_validation_engineering"],
+      "verified": true
+    },
+    {
+      "id": "EXP_CAE_002",
+      "category": "professional_experience",
+      "claim": "Performed modal and harmonic-response analyses in ANSYS to evaluate resonance and dynamic response of machinery and vibrating systems.",
+      "source": ["mechanical_en", "mechanical_de", "wind_en", "wind_de", "wind_thesis_en"],
+      "period": "03/2017-12/2021",
+      "keywords": ["modal", "harmonic", "vibration", "resonance", "dynamic response", "structural dynamics", "ANSYS"],
+      "tags": ["cae_structural_dynamics", "reliability_dynamics_engineering"],
+      "verified": true
+    },
+    {
+      "id": "EXP_MECH_001",
+      "category": "professional_experience",
+      "claim": "Designed aggregate-processing machinery and assemblies including jaw crushers, belt conveyors, high-frequency vibrating screens and aggregate washing systems.",
+      "source": ["mechanical_en", "mechanical_de", "wind_en", "wind_de"],
+      "period": "03/2017-12/2021",
+      "keywords": ["machinery", "machine design", "crusher", "conveyor", "vibrating screen", "mechanical design"],
+      "tags": ["mechanical_product_development"],
+      "verified": true
+    },
+    {
+      "id": "EXP_MECH_002",
+      "category": "professional_experience",
+      "claim": "Created machine assemblies, structural components, mechanical interfaces and manufacturing drawings in CATIA V5.",
+      "source": ["mechanical_en", "mechanical_de", "wind_en", "wind_de"],
+      "period": "03/2017-12/2021",
+      "keywords": ["CATIA", "CAD", "assemblies", "manufacturing drawings", "mechanical interfaces", "design"],
+      "tags": ["mechanical_product_development", "manufacturing_project_engineering"],
+      "verified": true
+    },
+    {
+      "id": "EXP_MECH_003",
+      "category": "professional_experience",
+      "claim": "Co-developed a high-frequency vibrating screen based on laboratory screening studies and defined operating requirements.",
+      "source": ["mechanical_en", "mechanical_de", "wind_en", "wind_de", "wind_thesis_en"],
+      "period": "03/2017-12/2021",
+      "keywords": ["laboratory", "requirements", "vibrating screen", "development", "validation", "vibration"],
+      "tags": ["mechanical_product_development", "test_validation_engineering"],
+      "verified": true
+    },
+    {
+      "id": "EXP_MECH_004",
+      "category": "professional_experience",
+      "claim": "Collaborated on operating calculations and vibration-motor selection for a high-frequency vibrating-screen configuration.",
+      "source": ["mechanical_en", "mechanical_de"],
+      "period": "03/2017-12/2021",
+      "keywords": ["motor selection", "vibration motor", "operating calculations", "excitation", "machinery"],
+      "tags": ["mechanical_product_development", "controls_robotics_mechatronics"],
+      "verified": true
+    },
+    {
+      "id": "EXP_SOLAR_001",
+      "category": "professional_experience",
+      "claim": "Designed photovoltaic tracking structures, mounting components and mechanical assemblies in SOLIDWORKS, supported by ANSYS structural analysis.",
+      "source": ["mechanical_en", "mechanical_de", "wind_en", "wind_de", "wind_thesis_en"],
+      "period": "01/2022-02/2023",
+      "keywords": ["solar", "photovoltaic", "tracking", "SOLIDWORKS", "ANSYS", "renewable energy", "mechanical assemblies"],
+      "tags": ["renewable_energy_projects", "mechanical_product_development"],
+      "verified": true
+    },
+    {
+      "id": "EXP_SOLAR_002",
+      "category": "professional_experience",
+      "claim": "Developed an electric-motor-driven automated solar-panel cleaning mechanism through concept, detailed design, manufacturing, assembly and successful on-site installation.",
+      "source": ["mechanical_en", "mechanical_de", "wind_en", "wind_de", "wind_thesis_en"],
+      "period": "01/2022-02/2023",
+      "keywords": ["automation", "mechanism", "electric motor", "concept development", "detailed design", "manufacturing", "assembly", "installation"],
+      "tags": ["renewable_energy_projects", "mechanical_product_development", "controls_robotics_mechatronics"],
+      "verified": true
+    },
+    {
+      "id": "EXP_SOLAR_003",
+      "category": "professional_experience",
+      "claim": "Improved manufacturability of mechanical components, contributing to approximately 10% reduction in production scrap and raw-material waste.",
+      "source": ["mechanical_en", "mechanical_de", "wind_en", "wind_de", "wind_thesis_en"],
+      "period": "01/2022-02/2023",
+      "keywords": ["manufacturability", "DFM", "scrap", "waste", "10%", "production improvement"],
+      "tags": ["manufacturing_project_engineering", "mechanical_product_development"],
+      "verified": true
+    },
+    {
+      "id": "EXP_DOC_001",
+      "category": "professional_experience",
+      "claim": "Prepared manufacturing/fabrication drawings, bills of materials, component specifications and technical engineering documentation.",
+      "source": ["mechanical_en", "mechanical_de", "wind_en", "wind_de", "wind_thesis_en"],
+      "period": "professional experience",
+      "keywords": ["BOM", "bills of materials", "drawings", "technical documentation", "component specifications", "manufacturing documentation"],
+      "tags": ["manufacturing_project_engineering", "mechanical_product_development"],
+      "verified": true
+    },
+    {
+      "id": "EXP_SAP_001",
+      "category": "professional_experience",
+      "claim": "Maintained engineering/product data in SAP-based systems as part of mechanical-development documentation work.",
+      "source": ["mechanical_en", "mechanical_de", "wind_en", "wind_de"],
+      "period": "01/2022-02/2023",
+      "keywords": ["SAP", "product data", "engineering data", "documentation"],
+      "tags": ["manufacturing_project_engineering"],
+      "verified": true
+    },
+    {
+      "id": "WIND_THS_001",
+      "category": "current_thesis",
+      "claim": "Current Wind Energy M.Sc. thesis develops a rotor-as-sensor approach to estimate wind speed, wind direction, vertical shear and veer from measurable wind-turbine response signals generated through OpenFAST simulations.",
+      "source": ["mechanical_en", "mechanical_de", "wind_en", "wind_de"],
+      "period": "current",
+      "keywords": ["rotor as sensor", "wind inflow", "wind speed", "wind direction", "shear", "veer", "OpenFAST", "turbine response"],
+      "tags": ["wind_loads_structures", "simulation_computational_engineering"],
+      "verified": true
+    },
+    {
+      "id": "WIND_THS_002",
+      "category": "current_thesis",
+      "claim": "Automates wind-turbine simulation and signal-processing workflows in Python and compares interpretable linear estimators with neural-network models as part of the current thesis work.",
+      "source": ["mechanical_en", "mechanical_de", "wind_en", "wind_de"],
+      "period": "current",
+      "keywords": ["Python", "signal processing", "automation", "linear estimator", "neural network", "data", "simulation workflow"],
+      "tags": ["simulation_computational_engineering", "systems_research_engineering"],
+      "verified": true
+    },
+    {
+      "id": "WIND_LOAD_001",
+      "category": "academic_project",
+      "claim": "Conducted OpenFAST aeroelastic simulations for a 20 MW offshore wind turbine with monopile foundation across IEC 61400-1 design load cases using Python/MATLAB-supported workflows.",
+      "source": ["wind_en", "wind_de", "wind_thesis_en", "mechanical_en", "mechanical_de"],
+      "period": "M.Sc. Wind Energy Engineering",
+      "keywords": ["OpenFAST", "aeroelastic", "20 MW", "offshore", "monopile", "IEC 61400-1", "load simulation", "Python", "MATLAB"],
+      "tags": ["wind_loads_structures", "simulation_computational_engineering"],
+      "verified": true
+    },
+    {
+      "id": "WIND_LOAD_002",
+      "category": "academic_project",
+      "claim": "Post-processed turbine-response channels and evaluated structural loads and dynamic behaviour under different environmental and operating conditions.",
+      "source": ["wind_en", "wind_de", "wind_thesis_en"],
+      "period": "M.Sc. Wind Energy Engineering",
+      "keywords": ["structural loads", "turbine response", "post-processing", "dynamic behaviour", "load channels", "environmental conditions"],
+      "tags": ["wind_loads_structures", "cae_structural_dynamics"],
+      "verified": true
+    },
+    {
+      "id": "WIND_AUTO_001",
+      "category": "academic_project",
+      "claim": "Developed Python utilities for OpenFAST simulation-case generation, batch execution and automated organization of output data.",
+      "source": ["wind_en", "wind_de", "wind_thesis_en"],
+      "period": "M.Sc. Wind Energy Engineering",
+      "keywords": ["Python", "OpenFAST", "automation", "batch execution", "case generation", "workflow", "output organization"],
+      "tags": ["simulation_computational_engineering", "wind_loads_structures"],
+      "verified": true
+    },
+    {
+      "id": "WIND_AUTO_002",
+      "category": "academic_project",
+      "claim": "Built a Python tool for real-time and post-processing visualization of OpenFAST output files for rapid inspection of turbine operating parameters, structural loads and dynamic response.",
+      "source": ["wind_en", "wind_de", "wind_thesis_en"],
+      "period": "M.Sc. Wind Energy Engineering",
+      "keywords": ["Python", "visualization", "monitoring", "OpenFAST", "post-processing", "structural loads", "dynamic response"],
+      "tags": ["simulation_computational_engineering", "test_validation_engineering"],
+      "verified": true
+    },
+    {
+      "id": "WIND_PLAN_001",
+      "category": "academic_project",
+      "claim": "Completed wind-farm planning in windPRO and QGIS including turbine layout, energy-yield estimation, noise assessment and shadow-flicker analysis.",
+      "source": ["wind_en", "wind_de", "wind_thesis_en", "mechanical_en", "mechanical_de"],
+      "period": "M.Sc. Wind Energy Engineering",
+      "keywords": ["windPRO", "QGIS", "wind farm", "layout", "energy yield", "noise", "shadow flicker", "site assessment"],
+      "tags": ["wind_planning_assessment", "renewable_energy_projects"],
+      "verified": true
+    },
+    {
+      "id": "WIND_PLAN_002",
+      "category": "academic_project",
+      "claim": "Evaluated bat-curtailment strategies and their effect on expected annual energy production in a wind-farm planning study.",
+      "source": ["wind_en", "wind_de", "wind_thesis_en"],
+      "period": "M.Sc. Wind Energy Engineering",
+      "keywords": ["bat curtailment", "environmental assessment", "annual energy production", "AEP", "wind farm"],
+      "tags": ["wind_planning_assessment", "renewable_energy_projects"],
+      "verified": true
+    },
+    {
+      "id": "CTRL_001",
+      "category": "academic_project",
+      "claim": "Developed and implemented a MATLAB/Simulink motion-control system for precise movement and positioning of an autonomous underwater welding robot.",
+      "source": ["mechanical_en", "mechanical_de", "wind_en", "wind_de", "wind_thesis_en"],
+      "period": "M.Sc. Mechanical Engineering thesis",
+      "keywords": ["MATLAB", "Simulink", "motion control", "robotics", "control systems", "positioning", "autonomous robot"],
+      "tags": ["controls_robotics_mechatronics", "systems_research_engineering"],
+      "verified": true
+    },
+    {
+      "id": "PROTO_001",
+      "category": "project",
+      "claim": "Designed and prototyped mechanical components for a hand prosthesis using 3D printing, supporting iterative development from digital model to manufactured parts.",
+      "source": ["mechanical_en", "mechanical_de"],
+      "period": "volunteer project",
+      "keywords": ["3D printing", "additive manufacturing", "prototype", "prosthesis", "iterative design"],
+      "tags": ["mechanical_product_development", "test_validation_engineering"],
+      "verified": true
+    },
+    {
+      "id": "TOOL_CAD_001",
+      "category": "skill",
+      "claim": "CAD tools used across education/professional work include CATIA V5, SOLIDWORKS and Siemens NX.",
+      "source": ["mechanical_en", "mechanical_de", "wind_en", "wind_de"],
+      "keywords": ["CATIA V5", "SOLIDWORKS", "Siemens NX", "CAD"],
+      "tags": ["mechanical_product_development"],
+      "verified": true
+    },
+    {
+      "id": "TOOL_CAE_001",
+      "category": "skill",
+      "claim": "CAE tools listed in the CV evidence include ANSYS Workbench and Abaqus.",
+      "source": ["mechanical_en", "mechanical_de", "wind_en", "wind_de", "wind_thesis_en"],
+      "keywords": ["ANSYS Workbench", "Abaqus", "CAE", "FEA", "FEM"],
+      "tags": ["cae_structural_dynamics"],
+      "verified": true
+    },
+    {
+      "id": "TOOL_DATA_001",
+      "category": "skill",
+      "claim": "Programming and engineering-data tools listed in the CV evidence include Python, MATLAB/Simulink, Power BI and Excel.",
+      "source": ["mechanical_en", "mechanical_de", "wind_en", "wind_de"],
+      "keywords": ["Python", "MATLAB", "Simulink", "Power BI", "Excel", "data"],
+      "tags": ["simulation_computational_engineering"],
+      "verified": true
+    },
+    {
+      "id": "TOOL_PM_001",
+      "category": "skill",
+      "claim": "Engineering-system/tools evidence includes SAP-based engineering data, MS Project and technical documentation workflows.",
+      "source": ["mechanical_en", "mechanical_de", "wind_en", "wind_de"],
+      "keywords": ["SAP", "MS Project", "project", "technical documentation"],
+      "tags": ["manufacturing_project_engineering", "renewable_energy_projects"],
+      "verified": true
+    },
+    {
+      "id": "EDU_WIND_001",
+      "category": "education",
+      "claim": "Currently completing an M.Sc. in Wind Energy Engineering at Flensburg University of Applied Sciences with current grade average 1.9 and expected graduation in February 2027.",
+      "source": ["mechanical_en", "mechanical_de", "wind_en", "wind_de"],
+      "period": "03/2023-present",
+      "keywords": ["M.Sc.", "Wind Energy Engineering", "Flensburg", "1.9", "February 2027"],
+      "tags": ["wind_loads_structures", "renewable_energy_projects"],
+      "verified": true
+    },
+    {
+      "id": "EDU_MECH_MSC_001",
+      "category": "education",
+      "claim": "Holds an M.Sc. in Mechanical Engineering with focus on control systems and robotics.",
+      "source": ["mechanical_en", "mechanical_de", "wind_en", "wind_de", "wind_thesis_en"],
+      "period": "09/2014-01/2017",
+      "keywords": ["M.Sc. Mechanical Engineering", "control systems", "robotics"],
+      "tags": ["mechanical_product_development", "controls_robotics_mechatronics"],
+      "verified": true
+    },
+    {
+      "id": "EDU_MECH_BSC_001",
+      "category": "education",
+      "claim": "Holds a B.Sc. in Mechanical Engineering with focus on mechanical design and vibration analysis.",
+      "source": ["mechanical_en", "mechanical_de", "wind_en", "wind_de", "wind_thesis_en"],
+      "period": "09/2008-06/2013",
+      "keywords": ["B.Sc. Mechanical Engineering", "mechanical design", "vibration analysis"],
+      "tags": ["mechanical_product_development", "cae_structural_dynamics"],
+      "verified": true
+    },
+    {
+      "id": "LANG_EN_001",
+      "category": "language",
+      "claim": "English proficiency: C1; IELTS overall score 7.0.",
+      "source": ["mechanical_en", "mechanical_de", "wind_en", "wind_de", "wind_thesis_en"],
+      "keywords": ["English", "C1", "IELTS 7.0"],
+      "verified": true
+    },
+    {
+      "id": "LANG_DE_001",
+      "category": "language",
+      "claim": "German proficiency: B1; actively learning and preparing for certification.",
+      "source": ["mechanical_en", "mechanical_de", "wind_en", "wind_de", "wind_thesis_en"],
+      "keywords": ["German", "Deutsch", "B1", "learning"],
+      "verified": true
+    },
+    {
+      "id": "STATUS_EXP_001",
+      "category": "candidate_status",
+      "claim": "Has nearly six years of professional mechanical engineering/development experience across machinery, renewable-energy mechanisms and mechanical systems.",
+      "source": ["mechanical_en", "mechanical_de", "wind_en", "wind_de", "wind_thesis_en"],
+      "keywords": ["six years", "professional experience", "mechanical engineering", "development engineer"],
+      "verified": true
+    },
+    {
+      "id": "CERT_ANSYS_001",
+      "category": "training",
+      "claim": "Selected training includes IEEE ANSYS training.",
+      "source": ["mechanical_en", "mechanical_de", "wind_en", "wind_de", "wind_thesis_en"],
+      "keywords": ["ANSYS", "training", "IEEE"],
+      "verified": true
+    },
+    {
+      "id": "CERT_PY_001",
+      "category": "training",
+      "claim": "Selected training includes HarvardX Python programming.",
+      "source": ["mechanical_en", "mechanical_de", "wind_en", "wind_de", "wind_thesis_en"],
+      "keywords": ["Python", "HarvardX", "training"],
+      "verified": true
+    }
+  ]
+}

@@ -29,8 +29,14 @@ class Job:
 
 @dataclass
 class MatchResult:
+    # Fit answers "how well does the verified evidence satisfy the vacancy?"
     score: int
     recommendation: str
+    # Priority answers "how strongly should this candidate actually consider applying?"
+    priority_score: int = 0
+    priority_label: str = ""
+    priority_reasons: list[str] = field(default_factory=list)
+
     required_match: int = 0
     nice_to_have_match: int = 0
     strong_matches: list[str] = field(default_factory=list)
@@ -40,6 +46,15 @@ class MatchResult:
     risks: list[str] = field(default_factory=list)
     reasoning: str = ""
     source: str = "heuristic"
+    screen_score: int = 0
+    screen_decision: str = ""
+
+    # Traceability
+    evidence_ids: list[str] = field(default_factory=list)
+    requirement_evidence: list[dict[str, Any]] = field(default_factory=list)
+    decision: str = ""
+    decision_reasons: list[str] = field(default_factory=list)
+
     job_language: str = "en"
     employment_type: str = "unknown"
     career_family: str = "general_engineering"

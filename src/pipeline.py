@@ -1,6 +1,5 @@
 from __future__ import annotations
 import json
-import os
 from pathlib import Path
 
 from .models import MatchResult
@@ -13,7 +12,7 @@ from .sources.smartrecruiters import SmartRecruitersSource
 from .sources.manual import ManualLinksSource
 from .sources.email_alert_files import EmailAlertFilesSource
 from .pagecheck import check_and_enrich
-from .filters import hard_filter, age_days
+from .filters import hard_filter, age_days, heuristic_score
 from .ai import AIEngine
 from .documents import generate_package
 from .notifier import notify
@@ -21,12 +20,14 @@ from .search_planner import build_search_queries
 from .career import (
     load_career_scope,
     detect_job_language,
-    detect_employment_type,
     detect_employment_profile,
     classify_career_family,
     detect_german_requirement,
 )
-from .cv_sources import select_cv_source, combined_cv_text
+from .cv_sources import select_cv_source
+from .evidence import load_evidence_registry, retrieve_evidence, evidence_by_ids
+from .priority import calculate_priority
+from .feedback import family_feedback_adjustments, write_feedback_summary
 from .utils import canonical_url, source_identity
 
 
@@ -41,20 +42,13 @@ def build_sources(cfg: dict):
     scfg = cfg.get("sources", {})
     country = cfg.get("search", {}).get("country", "de")
     out = []
-    if scfg.get("adzuna", {}).get("enabled", False):
-        out.append(AdzunaSource(country))
-    if scfg.get("jooble", {}).get("enabled", False):
-        out.append(JoobleSource())
-    if scfg.get("greenhouse", {}).get("enabled", False):
-        out.append(GreenhouseSource(scfg.get("greenhouse", {}).get("boards", [])))
-    if scfg.get("lever", {}).get("enabled", False):
-        out.append(LeverSource(scfg.get("lever", {}).get("sites", [])))
-    if scfg.get("smartrecruiters", {}).get("enabled", False):
-        out.append(SmartRecruitersSource(scfg.get("smartrecruiters", {}).get("companies", [])))
-    if scfg.get("manual_links", {}).get("enabled", False):
-        out.append(ManualLinksSource(scfg.get("manual_links", {}).get("file", "input/manual_jobs.txt")))
-    if scfg.get("email_alert_files", {}).get("enabled", False):
-        out.append(EmailAlertFilesSource(scfg.get("email_alert_files", {}).get("directory", "input/job_alerts")))
+    if scfg.get("adzuna", {}).get("enabled", False): out.append(AdzunaSource(country))
+    if scfg.get("jooble", {}).get("enabled", False): out.append(JoobleSource())
+    if scfg.get("greenhouse", {}).get("enabled", False): out.append(GreenhouseSource(scfg.get("greenhouse", {}).get("boards", [])))
+    if scfg.get("lever", {}).get("enabled", False): out.append(LeverSource(scfg.get("lever", {}).get("sites", [])))
+    if scfg.get("smartrecruiters", {}).get("enabled", False): out.append(SmartRecruitersSource(scfg.get("smartrecruiters", {}).get("companies", [])))
+    if scfg.get("manual_links", {}).get("enabled", False): out.append(ManualLinksSource(scfg.get("manual_links", {}).get("file", "input/manual_jobs.txt")))
+    if scfg.get("email_alert_files", {}).get("enabled", False): out.append(EmailAlertFilesSource(scfg.get("email_alert_files", {}).get("directory", "input/job_alerts")))
     return out
 
 
@@ -69,70 +63,125 @@ def _match_from_json(raw: str | None) -> MatchResult | None:
         return None
 
 
+def _evaluate_job(job, profile, context, cfg, ai, registry, screen_count: int, deep_count: int):
+    tiered = cfg.get("ai", {}).get("tiered", {}) or {}
+    enabled = bool(tiered.get("enabled", True))
+    base = heuristic_score(job, profile, cfg)
+    screen_limit = int(tiered.get("screen_evidence_limit", 8))
+    deep_limit = int(tiered.get("deep_evidence_limit", 16))
+    screen_evidence = retrieve_evidence(job, registry, limit=screen_limit, career_family=context["career_family"])
+    screen_ids = [str(x.get("id")) for x in screen_evidence if x.get("id")]
+
+    if not ai.enabled:
+        return ai.heuristic_match(job, profile, context, screen_ids), screen_count, deep_count
+
+    if not enabled:
+        deep_evidence = retrieve_evidence(job, registry, limit=deep_limit, career_family=context["career_family"])
+        return ai.match(job, profile, deep_evidence, context=context, base_score=base), screen_count, deep_count + 1
+
+    screen_min = int(tiered.get("screen_min_pre_score", 40))
+    max_screen = int(tiered.get("max_screen_per_run", 24))
+    max_deep = int(tiered.get("max_deep_per_run", 10))
+    force_manual = bool(tiered.get("manual_force_screen", True)) and job.source == "manual"
+    if base < screen_min and not force_manual:
+        return ai.heuristic_match(job, profile, context, screen_ids), screen_count, deep_count
+    if screen_count >= max_screen:
+        m = ai.heuristic_match(job, profile, context, screen_ids)
+        m.decision_reasons.append("AI screening budget for this cycle was exhausted; retry on a later run.")
+        return m, screen_count, deep_count
+
+    screen = ai.screen(job, profile, screen_evidence, context, base_score=base)
+    screen_count += 1
+    sscore = int(screen.get("screen_score", base) or base)
+    sdecision = str(screen.get("decision", "HOLD")).upper()
+    deep_min = int(tiered.get("deep_min_screen_score", 58))
+    force_pre = int(tiered.get("deep_force_pre_score", 72))
+    promote = sdecision == "PROMOTE" or sscore >= deep_min or base >= force_pre
+
+    if not promote:
+        return ai.screen_to_match(job, profile, screen_evidence, context, base, screen), screen_count, deep_count
+
+    if deep_count >= max_deep:
+        m = ai.heuristic_match(job, profile, context, screen_ids)
+        m.screen_score = sscore
+        m.screen_decision = sdecision
+        m.decision_reasons.append("Deep AI budget for this cycle was exhausted; job will be retried on a later run.")
+        return m, screen_count, deep_count
+
+    deep_evidence = retrieve_evidence(job, registry, limit=deep_limit, career_family=context["career_family"])
+    match = ai.match(job, profile, deep_evidence, context=context, base_score=base, screen_data=screen)
+    deep_count += 1
+    return match, screen_count, deep_count
+
+
+def _document_evidence(job, match: MatchResult, registry: list[dict], cfg: dict) -> list[dict]:
+    """Use deep-match citations first, then fill with other relevant verified evidence."""
+    limit = int(cfg.get("evidence", {}).get("document_evidence_limit", 18) or 18)
+    chosen = evidence_by_ids(match.evidence_ids, registry)
+    have = {str(x.get("id")) for x in chosen}
+    for item in retrieve_evidence(job, registry, career_family=match.career_family, limit=limit):
+        iid = str(item.get("id", ""))
+        if iid and iid not in have:
+            chosen.append(item); have.add(iid)
+        if len(chosen) >= limit:
+            break
+    return chosen[:limit]
+
+
 def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
     profile = load_profile(cfg.get("documents", {}).get("profile", "input/profile.json"))
-    ai = AIEngine(cfg)
+    db.configure_telemetry(cfg)
+    ai = AIEngine(cfg, usage_recorder=db.record_usage)
     sources = build_sources(cfg)
     queries = build_search_queries(cfg, profile, ai)
     locations = cfg.get("search", {}).get("locations", []) or [""]
     limit = int(cfg.get("search", {}).get("results_per_source", 25))
     verify = bool(cfg.get("search", {}).get("verify_live_page", True))
-    min_score = int(cfg.get("preferences", {}).get("minimum_match_score", 65))
-    package_score = int(cfg.get("preferences", {}).get("package_generation_score", 78))
-    max_ai = int(cfg.get("ai", {}).get("max_jobs_per_run", 24))
+    min_score = int(cfg.get("preferences", {}).get("minimum_match_score", 63))
+    package_priority = int(cfg.get("priority", {}).get("package_generation_min", 74))
+    immediate_priority = int(cfg.get("notifications", {}).get("immediate_priority_min", 82))
     desktop = bool(cfg.get("notifications", {}).get("desktop", True))
     scope = load_career_scope(cfg.get("search", {}).get("career_scope_file", "input/career_scope.yaml"))
-    evidence_bundle = combined_cv_text(cfg)
+    registry = load_evidence_registry(cfg)
+    feedback_adjustments = family_feedback_adjustments(db, cfg)
 
-    found = []
-    errors = []
+    found, errors = [], []
     for src in sources:
         pairs = [("", "")] if src.name in ("manual", "email_alert") else [(q, l) for q in queries for l in locations]
         for q, loc in pairs:
             try:
                 found.extend(src.search(q, loc, limit))
-            except Exception as e:
-                errors.append(f"{src.name}: {e}")
+            except Exception as exc:
+                errors.append(f"{src.name}: {exc}")
 
-    seen = set()
-    unique = []
+    seen, unique = set(), []
     for job in found:
-        # URL-first deduplication prevents tracking parameters and repeated alert links
-        # from creating multiple records before page enrichment.
         key = canonical_url(job.url) or source_identity(job)
         if key in seen:
             continue
-        seen.add(key)
-        unique.append(job)
+        seen.add(key); unique.append(job)
 
-    processed = 0
-    strong = []
-    packages = []
-    not_ready = []
+    # Phase 1: enrich/filter/classify every vacancy cheaply. This means AI budget is
+    # spent on the strongest candidates, not simply whichever source happened to run first.
+    candidates = []
     parse_failures = []
-
     for job in unique:
         if verify:
             active, job = check_and_enrich(job)
         else:
             active = "unknown"
-        # Do not pollute the database with generic parser failures. A manual URL
-        # remains in input/manual_jobs.txt and will be retried next cycle.
         bad_title = not job.title or job.title.strip().lower() in {"job", "unknown job", "careers", "job details"}
         bad_company = not job.company or job.company.strip().lower() in {"unknown company", "jobs", "careers"}
         if bad_title and bad_company:
             parse_failures.append({"url": job.url, "active": active, "reason": "Could not extract job title/company"})
             continue
-        if not job.title:
-            job.title = "Job (title not parsed)"
-        if not job.company:
-            job.company = "Company not parsed"
+        if not job.title: job.title = "Job (title not parsed)"
+        if not job.company: job.company = "Company not parsed"
 
         fp = db.upsert_job(job)
         db.set_active(fp, active)
         if active == "expired":
             continue
-
         ok, filter_reason = hard_filter(job, cfg)
         if not ok:
             db.set_filter_reason(fp, filter_reason)
@@ -144,9 +193,7 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
         emp = employment["primary"]
         german_req = detect_german_requirement(job)
         family_key, family_label, tier, family_signal = classify_career_family(job, scope)
-        source_cv = select_cv_source(
-            job, cfg, target_language=lang, career_family=family_key, employment_type=emp
-        )
+        source_cv = select_cv_source(job, cfg, target_language=lang, career_family=family_key, employment_type=emp)
         context = {
             "job_language": lang,
             "employment_type": emp,
@@ -160,97 +207,127 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
             "career_family_signal": family_signal,
             "source_cv": source_cv.key if source_cv else "",
         }
+        base = heuristic_score(job, profile, cfg)
+        # Manual links receive a small ordering bonus because the user explicitly chose
+        # them, but their actual FIT score remains unchanged.
+        ordering_score = base + (8 if job.source == "manual" else 0)
+        candidates.append({
+            "job": job, "fp": fp, "active": active, "context": context,
+            "source_cv": source_cv, "base": base, "ordering_score": ordering_score,
+        })
 
+    candidates.sort(key=lambda x: (x["ordering_score"], x["base"]), reverse=True)
+
+    screened = 0
+    deep_evaluated = 0
+    evaluated = 0
+    strong, packages, not_ready = [], [], []
+
+    # Phase 2: tiered AI, in ranked order.
+    for c in candidates:
+        job, fp, active, context, source_cv = c["job"], c["fp"], c["active"], c["context"], c["source_cv"]
         state = db.get_job_state(fp) or {}
         match = _match_from_json(state.get("match_json"))
-
-        # Heuristic scores are intentionally cheap and are recalculated every run so
-        # parser improvements or changed vacancy text cannot leave a stale score cached.
-        # Expensive Codex/API scores remain cached unless an explicit upgrade is needed.
-        needs_heuristic_refresh = bool(match is not None and match.source == "heuristic")
-        needs_ai_upgrade = bool(needs_heuristic_refresh and ai.enabled)
-        if match is None or needs_heuristic_refresh or needs_ai_upgrade:
-            if processed >= max_ai:
-                continue
-            match = ai.match(job, profile, candidate_cv=evidence_bundle, context=context)
-            # Manual links intentionally bypass the automated freshness cutoff. Keep
-            # the age visible as a risk instead of silently skipping the job.
+        # Deep AI and HOLD/SKIP screens are cached. Cheap heuristic rows are refreshed
+        # so parser fixes/new Codex availability can upgrade them automatically.
+        should_refresh = match is None or match.source == "heuristic"
+        if should_refresh:
+            match, screened, deep_evaluated = _evaluate_job(
+                job, profile, context, cfg, ai, registry, screened, deep_evaluated
+            )
+            evaluated += 1
             a = age_days(job)
             max_age = cfg.get("search", {}).get("max_age_days", 7)
             if job.source == "manual" and a is not None and a > max_age:
                 warning = f"Vacancy is about {int(a)} days old, but it was evaluated because you supplied the URL manually."
                 if warning not in match.risks:
                     match.risks.append(warning)
-            processed += 1
-            db.set_match(fp, match)
         else:
-            # Keep classifications current even when reusing a cached score.
-            match.job_language = lang
-            match.employment_type = emp
-            match.career_stage = employment["career_stage"]
-            match.schedule = employment["schedule"]
-            match.contract = employment["contract"]
-            match.career_family = family_key
-            match.career_family_label = family_label
-            match.career_tier = tier
-            match.source_cv = source_cv.key if source_cv else ""
-            match.german_requirement = german_req
+            match.job_language = context["job_language"]
+            match.employment_type = context["employment_type"]
+            match.career_stage = context["career_stage"]
+            match.schedule = context["schedule"]
+            match.contract = context["contract"]
+            match.career_family = context["career_family"]
+            match.career_family_label = context["career_family_label"]
+            match.career_tier = context["career_tier"]
+            match.source_cv = context["source_cv"]
+            match.german_requirement = context["german_requirement"]
+
+        adjustment = feedback_adjustments.get(context["career_family"], 0.0)
+        pscore, plabel, preasons = calculate_priority(job, match, cfg, feedback_adjustment=adjustment)
+        match.priority_score = pscore
+        match.priority_label = plabel
+        match.priority_reasons = preasons
+        practical_action = {"HIGH":"APPLY", "REVIEW":"REVIEW", "LOW":"SAVE_OR_SKIP", "REJECT":"REJECT"}.get(plabel, "REVIEW")
+        match.decision = practical_action
+        for reason in preasons:
+            if reason not in match.decision_reasons:
+                match.decision_reasons.append(reason)
+        db.set_match(fp, match)
 
         if match.score >= min_score:
             strong.append((job, match))
 
         state = db.get_job_state(fp) or {}
+        user_decision = str(state.get("user_decision", "") or "").upper()
         app_status = state.get("application_status")
+        deep_match = match.source in {"codex_cli", "openai_api"}
         should_generate = (
-            match.score >= package_score
+            deep_match
+            and match.priority_score >= package_priority
             and active != "expired"
+            and user_decision not in {"SKIP", "NOT_INTERESTED"}
             and not dry_run
-            and (
-                not state.get("has_application", False)
-                or (app_status == "needs_ai_or_review" and ai.enabled)
-            )
+            and (not state.get("has_application", False) or (app_status == "needs_ai_or_review" and ai.enabled))
         )
         if should_generate:
-            pkg, res = generate_package(job, match, profile, cfg, ai, fp, source_cv)
+            doc_evidence = _document_evidence(job, match, registry, cfg)
+            pkg, res = generate_package(job, match, profile, cfg, ai, fp, source_cv, evidence_items=doc_evidence)
             status = "package_ready" if res.get("ready") else "needs_ai_or_review"
             db.record_application(fp, str(pkg), status=status)
             if res.get("ready"):
                 packages.append((job, match, pkg, res))
-                notify(
-                    "New application package ready",
-                    f"{job.title} at {job.company} — {match.score}% — {lang.upper()} — {emp}. Files: {pkg}",
-                    desktop,
-                )
+                if match.priority_score >= immediate_priority:
+                    notify(
+                        "High-priority application ready",
+                        f"{job.title} at {job.company} — Fit {match.score}, Priority {match.priority_score} ({match.priority_label}). Files: {pkg}",
+                        desktop,
+                    )
             else:
                 not_ready.append((job, match, pkg, res))
 
+    write_feedback_summary(db, cfg)
     return {
         "ai_backend": ai.backend_name(),
         "queries_this_cycle": len(queries),
         "raw_found": len(found),
         "unique": len(unique),
-        "evaluated": processed,
+        "eligible_after_filters": len(candidates),
+        "evaluated": evaluated,
+        "ai_screened": screened,
+        "deep_ai_evaluated": deep_evaluated,
         "strong_matches": len(strong),
         "ready_packages": len(packages),
         "packages_needing_ai_or_review": len(not_ready),
         "errors": errors,
         "parse_failures": parse_failures,
-        "top": sorted(
-            [
-                {
-                    "title": j.title,
-                    "company": j.company,
-                    "score": m.score,
-                    "language": m.job_language,
-                    "employment_type": m.employment_type,
-                    "german_requirement": m.german_requirement,
-                    "family": m.career_family_label,
-                    "tier": m.career_tier,
-                    "url": j.url,
-                }
-                for j, m in strong
-            ],
-            key=lambda x: x["score"],
-            reverse=True,
-        )[:15],
+        "usage_today": db.usage_stats(1),
+        "top": sorted([
+            {
+                "title": j.title,
+                "company": j.company,
+                "fit": m.score,
+                "priority": m.priority_score,
+                "priority_label": m.priority_label,
+                "source": m.source,
+                "language": m.job_language,
+                "employment_type": m.employment_type,
+                "german_requirement": m.german_requirement,
+                "family": m.career_family_label,
+                "tier": m.career_tier,
+                "url": j.url,
+            }
+            for j, m in strong
+        ], key=lambda x: (x["priority"], x["fit"]), reverse=True)[:15],
     }

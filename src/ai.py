@@ -3,15 +3,18 @@ import json
 import os
 import shutil
 import subprocess
+import time
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 from .models import Job, MatchResult
 from .utils import extract_json
 from .filters import heuristic_score
+from .evidence import evidence_payload
 
 
 def find_codex_executable(configured: str = "") -> str:
-    """Find Codex CLI, including the common Windows npm-global location."""
     candidates = []
     if configured:
         candidates.append(configured)
@@ -38,13 +41,23 @@ def find_codex_executable(configured: str = "") -> str:
     return ""
 
 
-class AIEngine:
-    """AI layer with OpenAI API, Codex CLI, or a local ranking fallback."""
+def _estimate_tokens(text: str) -> int:
+    # Telemetry estimate only; never used for billing. Good enough for trend monitoring.
+    return max(1, int(len(text or "") / 4))
 
-    def __init__(self, cfg: dict):
+
+class AIEngine:
+    """AI layer with explicit provider selection and usage telemetry.
+
+    V1.5 intentionally does NOT silently switch to paid OpenAI API usage. The default
+    config requests Codex CLI. OpenAI API is only used when provider=openai_api.
+    """
+
+    def __init__(self, cfg: dict, usage_recorder: Callable[[dict], None] | None = None):
         self.cfg = cfg
-        acfg = cfg.get("ai", {})
-        requested = str(acfg.get("provider", "auto")).lower().strip()
+        self.usage_recorder = usage_recorder
+        acfg = cfg.get("ai", {}) or {}
+        requested = str(acfg.get("provider", "codex_cli")).lower().strip()
         self.model = acfg.get("model") or os.getenv("OPENAI_MODEL", "gpt-5.6")
         self.codex_model = str(acfg.get("codex_model", "")).strip()
         self.timeout = int(acfg.get("timeout_seconds", 300))
@@ -53,6 +66,8 @@ class AIEngine:
         self.codex_executable = find_codex_executable(str(acfg.get("codex_path", "") or ""))
         self.last_tailor_error = ""
         self.last_cover_error = ""
+        self.last_tailor_trace: dict = {}
+        self.last_cover_evidence_ids: list[str] = []
 
         api_available = bool(os.getenv("OPENAI_API_KEY"))
         codex_available = bool(self.codex_executable)
@@ -65,11 +80,9 @@ class AIEngine:
                 self.provider = "codex_cli"
         elif requested == "heuristic":
             self.provider = "heuristic"
-        else:
-            if api_available:
-                self.provider = "openai_api"
-            elif codex_available:
-                self.provider = "codex_cli"
+        elif requested == "auto":
+            # Safe auto: Codex first, otherwise heuristic. Never spend API credits silently.
+            self.provider = "codex_cli" if codex_available else "heuristic"
 
         self.enabled = self.provider in ("openai_api", "codex_cli")
         if self.provider == "openai_api":
@@ -79,52 +92,106 @@ class AIEngine:
     def backend_name(self) -> str:
         return self.provider
 
-    def _codex(self, prompt: str) -> str:
-        if not self.codex_executable:
-            raise RuntimeError("Codex CLI executable not found")
-        cmd = [
-            self.codex_executable, "exec", "--ephemeral", "--skip-git-repo-check",
-            "--sandbox", "read-only",
-        ]
-        if self.codex_model:
-            cmd += ["--model", self.codex_model]
-        cmd += ["-"]
+    def _record_usage(self, **event):
+        if not self.usage_recorder:
+            return
         try:
-            p = subprocess.run(
-                cmd, input=prompt, text=True, capture_output=True, timeout=self.timeout
-            )
-        except Exception as e:
-            raise RuntimeError(f"Codex CLI failed to start: {e}") from e
-        if p.returncode != 0:
-            detail = (p.stderr or p.stdout or "unknown Codex error")[-4000:]
-            raise RuntimeError(f"Codex CLI failed: {detail}")
-        return (p.stdout or "").strip()
+            self.usage_recorder(event)
+        except Exception:
+            pass
 
-    def _text_call(self, instructions: str, payload: dict) -> str:
-        if self.provider == "openai_api":
-            resp = self.client.responses.create(
-                model=self.model,
-                instructions=instructions,
-                input=json.dumps(payload, ensure_ascii=False),
-            )
-            return resp.output_text.strip()
-        if self.provider == "codex_cli":
-            return self._codex(
-                instructions + "\n\nINPUT DATA:\n" + json.dumps(payload, ensure_ascii=False)
-            )
-        raise RuntimeError("No AI backend available")
+    def _text_call(self, instructions: str, payload: dict, operation: str = "ai_call") -> str:
+        payload_text = json.dumps(payload, ensure_ascii=False)
+        started = time.perf_counter()
+        input_tokens = _estimate_tokens(instructions + payload_text)
+        output_tokens = 0
+        cost = None
+        success = False
+        note = ""
+        text = ""
+        model_name = self.model if self.provider == "openai_api" else (self.codex_model or "chatgpt-codex")
+        try:
+            if self.provider == "openai_api":
+                resp = self.client.responses.create(
+                    model=self.model,
+                    instructions=instructions,
+                    input=payload_text,
+                )
+                text = (resp.output_text or "").strip()
+                usage = getattr(resp, "usage", None)
+                if usage is not None:
+                    input_tokens = int(getattr(usage, "input_tokens", input_tokens) or input_tokens)
+                    output_tokens = int(getattr(usage, "output_tokens", _estimate_tokens(text)) or _estimate_tokens(text))
+                else:
+                    output_tokens = _estimate_tokens(text)
+                tcfg = self.cfg.get("telemetry", {}) or {}
+                inp_rate = tcfg.get("openai_input_cost_per_million")
+                out_rate = tcfg.get("openai_output_cost_per_million")
+                if inp_rate is not None and out_rate is not None:
+                    cost = input_tokens / 1_000_000 * float(inp_rate) + output_tokens / 1_000_000 * float(out_rate)
+                success = True
+                return text
 
-    def match(
-        self,
-        job: Job,
-        profile: dict,
-        candidate_cv: str = "",
-        context: dict | None = None,
-    ) -> MatchResult:
-        context = context or {}
+            if self.provider == "codex_cli":
+                if not self.codex_executable:
+                    raise RuntimeError("Codex CLI executable not found")
+                full_prompt = instructions + "\n\nINPUT DATA:\n" + payload_text
+                cmd = [
+                    self.codex_executable, "exec", "--ephemeral", "--skip-git-repo-check",
+                    "--sandbox", "read-only",
+                ]
+                if self.codex_model:
+                    cmd += ["--model", self.codex_model]
+                cmd += ["-"]
+                p = subprocess.run(cmd, input=full_prompt, text=True, capture_output=True, timeout=self.timeout)
+                if p.returncode != 0:
+                    detail = (p.stderr or p.stdout or "unknown Codex error")[-4000:]
+                    raise RuntimeError(f"Codex CLI failed: {detail}")
+                text = (p.stdout or "").strip()
+                input_tokens = _estimate_tokens(full_prompt)
+                output_tokens = _estimate_tokens(text)
+                note = "Codex token counts are estimated from text length, not billing data."
+                success = True
+                return text
+
+            raise RuntimeError("No AI backend available")
+        except Exception as exc:
+            note = str(exc)[:1000]
+            raise
+        finally:
+            duration_ms = int((time.perf_counter() - started) * 1000)
+            self._record_usage(
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                provider=self.provider,
+                model=model_name,
+                operation=operation,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                input_chars=len(instructions + payload_text),
+                output_chars=len(text or ""),
+                estimated_cost_usd=cost,
+                duration_ms=duration_ms,
+                success=success,
+                note=note,
+            )
+
+    def heuristic_match(self, job: Job, profile: dict, context: dict, evidence_ids: list[str] | None = None) -> MatchResult:
         base = heuristic_score(job, profile, self.cfg)
-        pre = int(self.cfg.get("ai", {}).get("precheck_min_score", 15))
-        defaults = dict(
+        defaults = self._defaults(context)
+        return MatchResult(
+            score=base,
+            recommendation="APPLY" if base >= 70 else ("REVIEW" if base >= 55 else "SKIP"),
+            decision="APPLY" if base >= 70 else ("REVIEW" if base >= 55 else "SKIP"),
+            decision_reasons=["Local capability-based pre-score; no deep AI assessment yet."],
+            reasoning="Local capability-based heuristic. AI/Codex matching was unavailable or skipped.",
+            source="heuristic",
+            transferability="Local score includes transferable engineering capability and career-family signals.",
+            evidence_ids=list(evidence_ids or []),
+            **defaults,
+        )
+
+    def _defaults(self, context: dict) -> dict:
+        return dict(
             job_language=str(context.get("job_language", "en")),
             employment_type=str(context.get("employment_type", "unknown")),
             career_family=str(context.get("career_family", "general_engineering")),
@@ -136,19 +203,66 @@ class AIEngine:
             schedule=str(context.get("schedule", "unknown")),
             contract=str(context.get("contract", "unknown")),
         )
-        if not self.enabled or base < pre:
-            return MatchResult(
-                score=base,
-                recommendation="APPLY" if base >= 70 else ("REVIEW" if base >= 55 else "SKIP"),
-                reasoning="Local capability-based heuristic. AI/Codex matching was unavailable or skipped.",
-                source="heuristic",
-                transferability="Local score includes transferable engineering capability and career-family signals.",
-                **defaults,
-            )
+
+    def screen(self, job: Job, profile: dict, evidence_records: list[dict], context: dict, base_score: int) -> dict:
+        """Compact AI screening call. It is deliberately smaller than deep matching."""
+        if not self.enabled:
+            return {}
+        instructions = """You are a conservative engineering job screener. Return JSON only.
+Use ONLY the supplied verified evidence objects. Evaluate whether this vacancy deserves a deeper fit analysis.
+Do not reject solely because the exact job title is absent; transferable capability is allowed when evidence supports it.
+German B1 is the candidate's current level. Stronger German requirements are a risk, not an automatic deletion.
+Return: screen_score 0-100, decision PROMOTE|HOLD|SKIP, short reason, mandatory_gaps, evidence_ids.
+PROMOTE means a deep evaluation is worthwhile. HOLD means interesting but probably not worth a deep call now."""
+        payload = {
+            "candidate_profile_summary": {
+                "languages": profile.get("languages", {}),
+                "education": profile.get("education", []),
+                "job_preferences": profile.get("job_preferences", {}),
+            },
+            "verified_evidence": evidence_payload(evidence_records),
+            "job_context": context,
+            "local_pre_score": int(base_score),
+            "job": {
+                "title": job.title,
+                "company": job.company,
+                "location": job.location,
+                "description": (job.description or "")[:6000],
+            },
+        }
+        try:
+            data = extract_json(self._text_call(instructions, payload, operation="job_screen"))
+            return {
+                "screen_score": max(0, min(100, int(data.get("screen_score", base_score) or base_score))),
+                "decision": str(data.get("decision", "HOLD")).upper(),
+                "reason": str(data.get("reason", "")),
+                "mandatory_gaps": list(data.get("mandatory_gaps", []) or []),
+                "evidence_ids": [str(x) for x in (data.get("evidence_ids", []) or [])],
+            }
+        except Exception as exc:
+            return {"error": str(exc), "screen_score": int(base_score), "decision": "HOLD", "evidence_ids": []}
+
+    def match(
+        self,
+        job: Job,
+        profile: dict,
+        evidence_records: list[dict],
+        context: dict | None = None,
+        base_score: int | None = None,
+        screen_data: dict | None = None,
+    ) -> MatchResult:
+        context = context or {}
+        base = int(base_score if base_score is not None else heuristic_score(job, profile, self.cfg))
+        defaults = self._defaults(context)
+        ids = [str(e.get("id")) for e in evidence_records if e.get("id")]
+        if not self.enabled:
+            return self.heuristic_match(job, profile, context, ids)
 
         schema = {
-            "score": "integer 0-100",
+            "score": "integer 0-100 overall evidence fit, independent from practical application priority",
             "recommendation": "APPLY|REVIEW|SKIP",
+            "decision": "APPLY|REVIEW|SKIP",
+            "decision_reasons": ["specific reason"],
             "required_match": "integer 0-100",
             "nice_to_have_match": "integer 0-100",
             "technical_fit": "integer 0-100",
@@ -160,47 +274,57 @@ class AIEngine:
             "missing_required": ["string"],
             "missing_nice_to_have": ["string"],
             "risks": ["string"],
-            "transferability": "short explanation of transferable experience for this role",
+            "evidence_ids": ["EVIDENCE_ID"],
+            "requirement_evidence": [{"requirement": "...", "status": "strong|partial|missing", "evidence_ids": ["..."]}],
+            "transferability": "short explanation",
             "reasoning": "short explanation",
         }
         instructions = """You are a conservative but broad-minded job-fit evaluator for an engineering candidate.
-Never invent facts. Use only the supplied structured profile and source CV evidence.
-Do NOT judge fit only by exact job-title or keyword overlap. Evaluate transferable evidence: engineering analysis, structural dynamics, mechanical/product development, simulation, renewable-energy work, Python/MATLAB workflows, manufacturing support, technical documentation, and cross-domain engineering.
-A role may be a strong match even when its title never appeared in the candidate CV, if the underlying work is supported.
-Separate REQUIRED from NICE-TO-HAVE requirements. Missing nice-to-have items should have limited impact.
-For adjacent/stretch roles, explain the bridge and any genuine gaps. Do not convert adjacent experience into a false claim.
-German level is B1/actively learning unless the supplied evidence says otherwise. Never upgrade language proficiency.
-The candidate explicitly wants German-language jobs as well as English-language jobs. Do not reject a German vacancy merely because it is written in German. If the vacancy explicitly asks for B2/C1/fluent/native German, record that as a genuine risk/gap and weigh it proportionately, but evaluate the engineering fit separately.
-Full-time positions are a primary target; do not assume the candidate only wants internships, working-student jobs or a thesis.
-Return JSON only, no markdown."""
+Return JSON only. Never invent facts. VERIFIED EVIDENCE OBJECTS are the factual boundary for claims.
+Do NOT judge fit only by exact title/keyword overlap. Evaluate transferable engineering evidence when justified.
+Separate REQUIRED from NICE-TO-HAVE. Missing nice-to-have items should have limited impact.
+For every important claimed match, cite one or more supplied evidence IDs in requirement_evidence.
+Never combine two evidence objects into a stronger claim that neither supports (for example do not invent coupled simulation work).
+German is B1/actively learning unless evidence explicitly says otherwise. Stronger German requirements must lower language_fit and appear as a risk, while engineering fit stays separate.
+Full-time professional positions are primary targets as well as student/thesis roles.
+The score is FIT, not application priority; practical priority is calculated separately by deterministic code."""
         payload = {
             "candidate_profile": profile,
-            "all_candidate_cv_evidence_latex": candidate_cv[:65000],
+            "verified_evidence": evidence_payload(evidence_records),
             "job_context": context,
+            "local_pre_score": base,
+            "ai_screen": screen_data or {},
             "job": {
                 "title": job.title,
                 "company": job.company,
                 "location": job.location,
-                "description": job.description[:16000],
+                "description": (job.description or "")[:12000],
                 "salary_min": job.salary_min,
                 "salary_max": job.salary_max,
             },
             "required_json_shape": schema,
         }
         try:
-            data = extract_json(self._text_call(instructions, payload))
-        except Exception as e:
-            return MatchResult(
-                score=base,
-                recommendation="APPLY" if base >= 70 else ("REVIEW" if base >= 55 else "SKIP"),
-                reasoning=f"AI backend failed; local capability score used: {e}",
-                source="heuristic",
-                transferability="AI transferability analysis unavailable.",
-                **defaults,
-            )
+            data = extract_json(self._text_call(instructions, payload, operation="job_deep_match"))
+        except Exception as exc:
+            fallback = self.heuristic_match(job, profile, context, ids)
+            fallback.reasoning = f"Deep AI match failed; local score used: {exc}"
+            return fallback
+
+        valid_ids = set(ids)
+        cited_ids = [str(x) for x in (data.get("evidence_ids", []) or []) if str(x) in valid_ids]
+        req_evidence = []
+        for item in (data.get("requirement_evidence", []) or []):
+            if not isinstance(item, dict):
+                continue
+            clean = dict(item)
+            clean["evidence_ids"] = [str(x) for x in (item.get("evidence_ids", []) or []) if str(x) in valid_ids]
+            req_evidence.append(clean)
         return MatchResult(
-            score=max(0, min(100, int(data.get("score", base)))),
-            recommendation=str(data.get("recommendation", "REVIEW")).upper(),
+            score=max(0, min(100, int(data.get("score", base) or base))),
+            recommendation=str(data.get("recommendation", data.get("decision", "REVIEW"))).upper(),
+            decision=str(data.get("decision", data.get("recommendation", "REVIEW"))).upper(),
+            decision_reasons=list(data.get("decision_reasons", []) or []),
             required_match=int(data.get("required_match", 0) or 0),
             nice_to_have_match=int(data.get("nice_to_have_match", 0) or 0),
             technical_fit=int(data.get("technical_fit", data.get("required_match", 0)) or 0),
@@ -212,40 +336,58 @@ Return JSON only, no markdown."""
             missing_required=list(data.get("missing_required", []) or []),
             missing_nice_to_have=list(data.get("missing_nice_to_have", []) or []),
             risks=list(data.get("risks", []) or []),
+            evidence_ids=cited_ids or ids[:8],
+            requirement_evidence=req_evidence,
             transferability=str(data.get("transferability", "")),
             reasoning=str(data.get("reasoning", "")),
             source=self.provider,
+            screen_score=int((screen_data or {}).get("screen_score", 0) or 0),
+            screen_decision=str((screen_data or {}).get("decision", "")),
             **defaults,
         )
 
-    def suggest_search_queries(
-        self, source_cvs: str, profile: dict, broad: bool = True, limit: int = 14
-    ) -> list[str]:
+    def screen_to_match(self, job: Job, profile: dict, evidence_records: list[dict], context: dict, base_score: int, screen: dict) -> MatchResult:
+        ids = [str(e.get("id")) for e in evidence_records if e.get("id")]
+        screen_score = int(screen.get("screen_score", base_score) or base_score)
+        # Blend local and AI screen conservatively; this is still not a deep FIT assessment.
+        fit = int(round(0.45 * base_score + 0.55 * screen_score))
+        decision = str(screen.get("decision", "HOLD")).upper()
+        rec = "SKIP" if decision == "SKIP" else ("REVIEW" if decision == "HOLD" else "APPLY")
+        return MatchResult(
+            score=max(0, min(100, fit)),
+            recommendation=rec,
+            decision=rec,
+            decision_reasons=[str(screen.get("reason", "Compact AI screen; deep evaluation not promoted."))],
+            missing_required=list(screen.get("mandatory_gaps", []) or []),
+            reasoning=str(screen.get("reason", "Compact AI screen; deep evaluation not promoted.")),
+            source="ai_screen",
+            screen_score=screen_score,
+            screen_decision=decision,
+            evidence_ids=[x for x in (screen.get("evidence_ids", []) or []) if x in set(ids)] or ids[:8],
+            transferability="Compact AI screening used relevant verified evidence; deep match was not run.",
+            **self._defaults(context),
+        )
+
+    def suggest_search_queries(self, evidence_text: str, profile: dict, broad: bool = True, limit: int = 14) -> list[str]:
         if not self.enabled:
             return []
         instructions = """You are designing a broad job-search map for an engineering candidate in Germany.
-Return JSON only: {"queries": ["..."]}.
-Use actual evidence from ALL supplied CVs and profile, but do NOT simply repeat existing job titles.
-Think in underlying capabilities and adjacent occupations. Include plausible full-time engineering roles as well as relevant thesis, internship and working-student searches when appropriate.
-The candidate wants to search beyond only 'wind engineer' and 'mechanical engineer'. Consider CAE/FEA, structural dynamics, vibration/reliability, simulation/computational engineering, product/development engineering, test/validation, renewable-energy/project/site-assessment roles, engineering automation/data workflows, application engineering/technical consulting, manufacturing/project engineering, and carefully justified controls/robotics/systems roles.
-Generate a useful mix of ENGLISH and GERMAN job-board queries for Germany.
-Do not invent credentials or suggest clearly senior/director/principal positions.
-Broad search means discover opportunities; it does not mean falsely claiming qualification."""
+Return JSON only: {"queries": ["..."]}. Use actual supplied verified evidence and profile, but do not simply repeat past job titles.
+Think in capabilities and adjacent occupations: CAE/FEA, structural dynamics, simulation/computational engineering, mechanical/product development, R&D, test/validation, renewable energy, wind loads/planning, engineering automation/data, application engineering/technical consulting, manufacturing/project engineering, and carefully justified controls/robotics/systems roles.
+Generate a useful mix of English and German job-board queries. Do not suggest clearly senior/director/principal positions."""
         payload = {
             "candidate_profile": profile,
-            "all_source_cvs_latex": source_cvs[:60000],
+            "verified_evidence_summary": evidence_text[:18000],
             "broad_search": bool(broad),
             "max_queries": int(limit),
         }
         try:
-            data = extract_json(self._text_call(instructions, payload))
-            out = []
-            seen = set()
+            data = extract_json(self._text_call(instructions, payload, operation="search_query_planning"))
+            out, seen = [], set()
             for q in data.get("queries", []) or []:
                 q = str(q).strip()
                 if q and q.lower() not in seen:
-                    seen.add(q.lower())
-                    out.append(q)
+                    seen.add(q.lower()); out.append(q)
                 if len(out) >= limit:
                     break
             return out
@@ -261,69 +403,62 @@ Broad search means discover opportunities; it does not mean falsely claiming qua
         employment_type: str,
         career_family_label: str,
         source_cv_key: str,
-        evidence_bundle: str = "",
+        evidence_records: list[dict] | None = None,
     ) -> str:
         self.last_tailor_error = ""
+        self.last_tailor_trace = {}
         if not self.enabled:
             self.last_tailor_error = "AI/Codex backend unavailable"
             return master_tex
         language_name = "German" if target_language == "de" else "English"
-        instructions = f"""You are a senior CV editor. Edit the supplied LaTeX CV for one real job.
-Return ONLY complete compilable LaTeX; no markdown fences or commentary.
+        instructions = f"""You are a senior CV editor. Tailor the supplied LaTeX CV for one real vacancy.
+Return JSON only with keys: latex, evidence_ids_used, claim_trace.
+claim_trace must be a list of objects {{"claim":"short generated/reworded claim", "evidence_ids":["ID"]}} for material claims you introduced or materially changed.
+The latex value must contain the complete compilable LaTeX document.
 
 TARGET LANGUAGE: {language_name}.
-The entire professional CV content must be in {language_name} when natural, including section headings, profile, descriptive job titles/bullets, skill labels and thesis/project descriptions. Keep proper nouns, company/university names, software names, standards, dates and grades accurate. Do not translate a proper noun into a different organization/product.
-
-CRITICAL TRUTH RULES:
-- Never invent, upgrade or exaggerate skills, employers, dates, achievements, education, language proficiency, certifications or responsibilities.
-- German proficiency is B1/learning unless evidence explicitly says otherwise.
-- The source CV may have been written specifically for Fraunhofer/a Master's thesis. Remove that narrow targeting when the target job is not a thesis.
-- Full-time employment is a valid target. For a full-time role, write a professional profile for the role; do NOT say the candidate is only seeking a Master's thesis/internship/working-student role.
-- Current Wind Energy M.Sc. status/coursework must remain truthful.
-- Adjacent-role tailoring may emphasize transferable evidence, but must not create experience the candidate does not have.
-- The selected base CV is a layout and starting emphasis, NOT the only source of truth. You may use a relevant factual bullet/project/skill from the supplied ALL-CV EVIDENCE LIBRARY if it is genuinely supported there.
-- When multiple source CVs phrase the same fact differently, choose the clearest concise wording without combining them into a stronger claim than either source supports.
-- Do not copy every available fact. Select the evidence most relevant to the target vacancy and keep the CV concise.
-
-IDENTITY PROTECTION:
-- Lines containing tokens like %%PROTECTED_IDENTITY_###%% are immutable placeholders. Preserve every token EXACTLY and in the same relative location. Do not delete, rewrite, translate, expand or guess what is behind them.
-- Never restore or guess redacted name, address, phone, email, LinkedIn, portfolio or account links. Preserve REPLACE placeholders placeholders exactly as well.
-
-QUALITY/CONCISION:
-- Preserve the LaTeX design and useful commands.
-- Aim for a concise maximum of about 2 A4 pages.
-- Professional Profile: 3-5 compact lines/sentences focused on evidence relevant to this job.
-- Keep all professional roles and education, but reorder/emphasize bullets based on relevance.
-- Prefer 2-3 strong bullets per professional role; avoid repetition.
-- Keep only the most relevant academic projects if space is tight; do not fabricate new projects.
-- Use evidence/outcomes where supported (e.g. ~10% scrap/raw-material reduction) but do not manufacture metrics.
-- Update job-specific PDF metadata/profile wording so it does not still say 'Fraunhofer IWES Master Thesis Inquiry' for unrelated roles.
-
-Target employment type: {employment_type}.
-Career family: {career_family_label}.
-Source CV: {source_cv_key}."""
+TRUTH BOUNDARY: use the selected source CV plus the supplied VERIFIED EVIDENCE OBJECTS. Never invent or upgrade skills, employers, dates, achievements, education, language proficiency, certifications or responsibilities. Never combine evidence into a stronger unsupported claim.
+German proficiency remains B1/learning. Preserve protected identity tokens exactly. Never restore or guess redacted personal data.
+For non-thesis jobs remove thesis-only targeting. Full-time employment is a valid target. Adjacent-role tailoring may emphasize transferable evidence without creating experience.
+Keep the CV concise, normally about 2 A4 pages. Prefer 2-3 relevant bullets per professional role and only the most relevant projects. Preserve the LaTeX design and useful commands.
+Update job-specific metadata/profile wording when appropriate.
+Target employment type: {employment_type}. Career family: {career_family_label}. Source CV: {source_cv_key}."""
+        evidence = evidence_payload(evidence_records or [])
         payload = {
             "candidate_profile": profile,
-            "job": {
-                "title": job.title,
-                "company": job.company,
-                "location": job.location,
-                "description": job.description[:16000],
-            },
+            "job": {"title": job.title, "company": job.company, "location": job.location, "description": (job.description or "")[:12000]},
             "source_cv_latex_with_protected_identity_tokens": master_tex,
-            "all_cv_evidence_library": evidence_bundle[:65000],
+            "verified_evidence_objects": evidence,
         }
         try:
-            text = self._text_call(instructions, payload).strip()
-        except Exception as e:
-            self.last_tailor_error = str(e)
+            raw = self._text_call(instructions, payload, operation="cv_tailoring").strip()
+            try:
+                data = extract_json(raw)
+            except Exception:
+                data = {}
+            if isinstance(data, dict) and data.get("latex"):
+                text = str(data.get("latex", ""))
+                valid = {str(e.get("id")) for e in evidence_records or []}
+                used = [str(x) for x in (data.get("evidence_ids_used", []) or []) if str(x) in valid]
+                trace = []
+                for item in data.get("claim_trace", []) or []:
+                    if not isinstance(item, dict):
+                        continue
+                    trace.append({
+                        "claim": str(item.get("claim", "")),
+                        "evidence_ids": [str(x) for x in (item.get("evidence_ids", []) or []) if str(x) in valid],
+                    })
+                self.last_tailor_trace = {"evidence_ids_used": used, "claim_trace": trace}
+            else:
+                text = raw
+                self.last_tailor_trace = {"warning": "AI returned plain LaTeX without claim trace."}
+        except Exception as exc:
+            self.last_tailor_error = str(exc)
             return master_tex
         if text.startswith("```"):
             lines = text.splitlines()
-            if lines and lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
+            if lines and lines[0].startswith("```"): lines = lines[1:]
+            if lines and lines[-1].strip() == "```": lines = lines[:-1]
             text = "\n".join(lines)
         return text
 
@@ -333,39 +468,45 @@ Source CV: {source_cv_key}."""
         profile: dict,
         match: MatchResult,
         target_language: str,
-        evidence_bundle: str = "",
+        evidence_records: list[dict] | None = None,
     ) -> str:
         self.last_cover_error = ""
+        self.last_cover_evidence_ids = []
         language_name = "German" if target_language == "de" else "English"
         if not self.enabled:
             self.last_cover_error = "AI/Codex backend unavailable"
-            if target_language == "de":
-                return "[AI/Codex required: German cover letter has not been generated.]"
-            return (
-                f"Dear Hiring Team,\n\nI am interested in the {job.title} position at {job.company}. "
-                "AI/Codex is not currently available, so this is intentionally only a placeholder.\n\nKind regards"
-            )
+            return "[AI/Codex required: tailored cover letter has not been generated.]"
         instructions = f"""Write a concise professional cover letter in {language_name} for this exact job.
-Plain text only; no markdown and no postal address block. About 180-280 words.
-Use only facts from the profile, selected match evidence, ALL-CV evidence library and job description. Never invent experience.
-Emphasize transferable engineering experience when the job is adjacent to past job titles.
-Do not frame the candidate as only seeking a Master's thesis unless this job is actually a thesis.
-For full-time roles, write as a full-time application while truthfully retaining current M.Sc. status.
-If the job is German, the letter must be German. Do not claim German above B1/actively learning. If the role requests stronger German, do not hide the mismatch or falsely claim fluency; keep the letter positive and truthful.
-Avoid generic flattery and repeated keyword stuffing. Explain 2-3 concrete evidence-to-requirement links and a concise motivation."""
+Return JSON only with keys: letter, evidence_ids_used.
+The letter should be about 180-280 words and ready to send after personal placeholders are restored.
+Use only the supplied VERIFIED EVIDENCE OBJECTS, match analysis and profile. Never invent experience.
+Explain 2-3 concrete evidence-to-requirement links. Do not frame the candidate as only seeking a thesis unless the vacancy is a thesis. For full-time roles write as a full-time application while truthfully retaining current M.Sc. status.
+If German is requested, never claim proficiency above B1/actively learning. If stronger German is required, stay positive but truthful. Avoid generic flattery and keyword stuffing.
+Every material experience claim in the letter must be supported by at least one ID in evidence_ids_used."""
+        evidence = evidence_payload(evidence_records or [])
+        valid_ids = {str(e.get("id")) for e in evidence_records or [] if e.get("id")}
         payload = {
             "candidate_profile": profile,
-            "job": {
-                "title": job.title,
-                "company": job.company,
-                "location": job.location,
-                "description": job.description[:14000],
-            },
+            "job": {"title": job.title, "company": job.company, "location": job.location, "description": (job.description or "")[:10000]},
             "match": match.to_dict(),
-            "all_cv_evidence_library": evidence_bundle[:65000],
+            "verified_evidence_objects": evidence,
         }
         try:
-            return self._text_call(instructions, payload).strip()
-        except Exception as e:
-            self.last_cover_error = str(e)
+            raw = self._text_call(instructions, payload, operation="cover_letter").strip()
+            try:
+                data = extract_json(raw)
+            except Exception:
+                data = {}
+            if isinstance(data, dict) and data.get("letter"):
+                letter = str(data.get("letter", "")).strip()
+                self.last_cover_evidence_ids = [
+                    str(x) for x in (data.get("evidence_ids_used", []) or []) if str(x) in valid_ids
+                ]
+                return letter
+            # Backwards-compatible fallback: text is usable for review but cannot pass
+            # the V1.5 evidence-trace readiness gate.
+            return raw
+        except Exception as exc:
+            self.last_cover_error = str(exc)
             return f"[AI/Codex failed: {language_name} cover letter was not generated.]"
+
