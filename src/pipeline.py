@@ -162,8 +162,12 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
         state = db.get_job_state(fp) or {}
         match = _match_from_json(state.get("match_json"))
 
-        needs_ai_upgrade = bool(match is not None and match.source == "heuristic" and ai.enabled)
-        if match is None or needs_ai_upgrade:
+        # Heuristic scores are intentionally cheap and are recalculated every run so
+        # parser improvements or changed vacancy text cannot leave a stale score cached.
+        # Expensive Codex/API scores remain cached unless an explicit upgrade is needed.
+        needs_heuristic_refresh = bool(match is not None and match.source == "heuristic")
+        needs_ai_upgrade = bool(needs_heuristic_refresh and ai.enabled)
+        if match is None or needs_heuristic_refresh or needs_ai_upgrade:
             if processed >= max_ai:
                 continue
             match = ai.match(job, profile, candidate_cv=evidence_bundle, context=context)

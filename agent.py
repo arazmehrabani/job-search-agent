@@ -45,7 +45,7 @@ def doctor(cfg):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Personal Job Search Agent V1.4")
+    ap = argparse.ArgumentParser(description="Personal Job Search Agent V1.4.1")
     ap.add_argument("--config", default="config.yaml")
     sub = ap.add_subparsers(dest="command", required=True)
     r = sub.add_parser("run", help="Search, verify, rank and prepare application packages")

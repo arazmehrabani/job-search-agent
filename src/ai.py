@@ -3,10 +3,39 @@ import json
 import os
 import shutil
 import subprocess
+from pathlib import Path
 
 from .models import Job, MatchResult
 from .utils import extract_json
 from .filters import heuristic_score
+
+
+def find_codex_executable(configured: str = "") -> str:
+    """Find Codex CLI, including the common Windows npm-global location."""
+    candidates = []
+    if configured:
+        candidates.append(configured)
+    env_path = os.getenv("CODEX_CLI_PATH", "").strip()
+    if env_path:
+        candidates.append(env_path)
+    for name in ("codex", "codex.cmd", "codex.exe"):
+        found = shutil.which(name)
+        if found:
+            candidates.append(found)
+    if os.name == "nt":
+        appdata = os.getenv("APPDATA", "")
+        if appdata:
+            candidates.extend([
+                str(Path(appdata) / "npm" / "codex.cmd"),
+                str(Path(appdata) / "npm" / "codex"),
+            ])
+    for c in candidates:
+        try:
+            if c and Path(c).exists():
+                return str(Path(c))
+        except Exception:
+            continue
+    return ""
 
 
 class AIEngine:
@@ -21,11 +50,12 @@ class AIEngine:
         self.timeout = int(acfg.get("timeout_seconds", 300))
         self.client = None
         self.provider = "heuristic"
+        self.codex_executable = find_codex_executable(str(acfg.get("codex_path", "") or ""))
         self.last_tailor_error = ""
         self.last_cover_error = ""
 
         api_available = bool(os.getenv("OPENAI_API_KEY"))
-        codex_available = bool(shutil.which("codex"))
+        codex_available = bool(self.codex_executable)
 
         if requested in ("openai", "openai_api", "api"):
             if api_available:
@@ -50,8 +80,10 @@ class AIEngine:
         return self.provider
 
     def _codex(self, prompt: str) -> str:
+        if not self.codex_executable:
+            raise RuntimeError("Codex CLI executable not found")
         cmd = [
-            "codex", "exec", "--ephemeral", "--skip-git-repo-check",
+            self.codex_executable, "exec", "--ephemeral", "--skip-git-repo-check",
             "--sandbox", "read-only",
         ]
         if self.codex_model:

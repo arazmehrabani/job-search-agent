@@ -174,6 +174,43 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(out.source_id, "6328")
         self.assertIn("Full time", out.metadata.get("employment_type_raw", ""))
 
+    def test_successfactors_real_portal_shape(self):
+        html = """<html><body>
+        <h1>Welcome to TÜV SÜD Group Job Portal!</h1>
+        <div>Job Description</div>
+        <div>Wind Energy Engineer - Specialist in Load Simulation for Onshore and Offshore Turbines (f/m/d) 1</div>
+        <div>At TÜV SÜD we are passionate about technology.</div>
+        <div>Tasks Review and evaluation of load assumptions for wind turbines according to international standards using independent aeroelastic comparative calculations.</div>
+        <div>Qualifications Completed engineering degree in mechanical engineering. Practical experience in aeroelastic simulation such as FAST. Fluent in German and English.</div>
+        <div>We want Diversity &amp; Inclusion to be a foundation of our company and create an environment where all our employees can trust they will be treated with respect.</div>
+        <div>Work Area: Industrial Plants, Energy &amp; Environmental Technology</div>
+        <div>Country/Region: Germany</div><div>Job Location: München</div><div>Working Model: Hybrid</div>
+        <div>Employment Type: Full time / regular</div><div>Company: TÜV SÜD Industrie Service GmbH</div>
+        <div>Org Unit Code: IS-ESW4-MUC</div><div>Requisition ID: 6328</div>
+        </body></html>"""
+        class R:
+            status_code=200; text=html
+            url="https://jobs.tuvsud.com/job/Wind-Energy-Engineer-Specialist-in-Load-Simulation-for-Onshore-and-Offshore-Turbines-%28fmd%29-1/6328-en_US"
+        job = Job("manual", "", "", "", "", R.url)
+        with patch("src.pagecheck.requests.get", return_value=R()):
+            active, out = check_and_enrich(job)
+        self.assertEqual(active, "active")
+        self.assertTrue(out.title.startswith("Wind Energy Engineer - Specialist"))
+        self.assertEqual(out.company, "TÜV SÜD Industrie Service GmbH")
+        self.assertEqual(out.location, "München")
+        self.assertNotIn("Diversity", out.company)
+        self.assertNotIn("Cookie", out.description)
+        self.assertEqual(detect_employment_profile(out)["schedule"], "full_time")
+        self.assertEqual(detect_german_requirement(out), "c1_plus_or_fluent")
+
+    def test_corrected_successfactors_title_improves_heuristic_score(self):
+        cfg = load_config("config.yaml")
+        profile = __import__("json").loads(Path("input/profile.json").read_text(encoding="utf-8"))
+        desc = "wind turbines onshore offshore aeroelastic load calculations FAST mechanical engineering simulation certification"
+        bad = Job("manual", "6328", "Welcome to TÜV SÜD Group Job Portal!", "TÜV SÜD", "München", "https://x", description=desc)
+        good = Job("manual", "6328", "Wind Energy Engineer - Specialist in Load Simulation for Onshore and Offshore Turbines", "TÜV SÜD", "München", "https://x", description=desc)
+        self.assertGreater(heuristic_score(good, profile, cfg), heuristic_score(bad, profile, cfg))
+
     def test_ashby_enrichment(self):
         html = """<html><body><h1>Working Student - Production Engineering (Human)</h1><main>
         Location Munich Employment Type Part time Location Type On-site Department Production Engineering Overview Application

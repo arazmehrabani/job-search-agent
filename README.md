@@ -1,8 +1,13 @@
-# Job Search Agent V1.4 — Robust Job Parsing + Multi-CV Bilingual Applications
+# Job Search Agent V1.4.1 — Robust Job Parsing + Multi-CV Bilingual Applications
 
-V1.4 fixes the parsing and classification problems exposed by real Ashby and TÜV SÜD manual URLs while keeping the broad career-search and multi-CV evidence architecture from V1.3.
+## V1.4.1 hotfix
 
-## Critical fixes in V1.4
+This hotfix restores a compact dashboard, fixes the live TÜV SÜD SuccessFactors page pattern where the first H1 is portal boilerplate, requires colon-labelled ATS metadata so normal prose containing the word `company` cannot become the company name, trims SuccessFactors boilerplate before heuristic scoring, and recalculates cheap heuristic pre-scores each run so stale V1.4 scores do not survive parser fixes. Dashboard scores marked **PRE** are local heuristic pre-scores; **AI** means Codex/API generated the fit score.
+
+
+V1.4.1 fixes the parsing and classification problems exposed by real Ashby and TÜV SÜD manual URLs while keeping the broad career-search and multi-CV evidence architecture from V1.3.
+
+## Critical fixes in V1.4.1
 
 - **Platform-aware enrichment:** JSON-LD first, plus dedicated handling for Ashby and SAP SuccessFactors-style pages such as TÜV SÜD.
 - **Company/location extraction:** structured vacancy fields are preferred over generic browser metadata.
@@ -17,17 +22,17 @@ V1.4 fixes the parsing and classification problems exposed by real Ashby and TÜ
 
 ### Migrating from V1.3
 
-The safest approach is to use the new V1.4 folder and copy only your `.env`, `input/manual_jobs.txt`, assets/photo, and any local configuration changes you intentionally made. If you instead reuse the old `output/job_agent.sqlite3`, run:
+The safest approach is to use the new V1.4.1 folder and copy only your `.env`, `input/manual_jobs.txt`, assets/photo, and any local configuration changes you intentionally made. If you instead reuse the old `output/job_agent.sqlite3`, run:
 
 ```powershell
 python agent.py repair-db
 ```
 
-Then run a new real or dry cycle so the three URLs are re-enriched with V1.4.
+Then run a new real or dry cycle so the three URLs are re-enriched with V1.4.1.
 
 ---
 
-## What changed in V1.4
+## What changed in V1.4.1
 
 The agent now has five factual CV sources:
 
@@ -144,7 +149,7 @@ German cover letter
 
 The agent must always state German ability truthfully as B1 / actively learning.
 
-If a role explicitly asks for B2/C1/fluent/native German, V1.4 records that as a **risk/gap** rather than automatically deleting the vacancy. This lets strong engineering matches remain visible while keeping the language mismatch honest.
+If a role explicitly asks for B2/C1/fluent/native German, V1.4.1 records that as a **risk/gap** rather than automatically deleting the vacancy. This lets strong engineering matches remain visible while keeping the language mismatch honest.
 
 The dashboard has a `German req.` column for this signal.
 
@@ -330,7 +335,7 @@ Run:
 python -m unittest discover -s tests -v
 ```
 
-V1.4 currently tests:
+V1.4.1 currently tests:
 
 - age filtering;
 - capability-based CAE matching;

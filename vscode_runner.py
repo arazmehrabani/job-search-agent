@@ -1,5 +1,5 @@
 # %% [markdown]
-# JOB SEARCH AGENT V1.4 — VS CODE / CONDA RUNNER
+# JOB SEARCH AGENT V1.4.1 — VS CODE / CONDA RUNNER
 #
 # 1) In VS Code select your Conda interpreter named: agent
 # 2) Open this file.
@@ -12,6 +12,7 @@ import json
 import os
 import sys
 import time
+import shutil
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()
@@ -37,7 +38,7 @@ def run_once(dry_run: bool = False):
     backend = AIEngine(cfg).backend_name()
     db = Database(os.getenv("JOB_AGENT_DB", "output/job_agent.sqlite3"))
     try:
-        print(f"\n=== Job Agent V1.4 | AI backend: {backend} | dry_run={dry_run} ===")
+        print(f"\n=== Job Agent V1.4.1 | AI backend: {backend} | dry_run={dry_run} ===")
         result = run_pipeline(cfg, db, dry_run=dry_run)
         dashboard = build_dashboard(db)
         print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -78,6 +79,11 @@ def watch(interval_minutes: float | None = None, dry_run: bool = False):
 cfg = load_config(CONFIG_FILE)
 ai = AIEngine(cfg)
 print("AI backend:", ai.backend_name())
+codex_path = ai.codex_executable or shutil.which("codex")
+print("Codex executable:", codex_path or "NOT FOUND in this Python/VS Code process")
+if ai.backend_name() == "heuristic" and cfg.get("ai", {}).get("enabled", True):
+    print("NOTE: scores shown as PRE are heuristic pre-scores, not final Codex/API fit scores.")
+    print("      If you expected Codex, test in the SAME VS Code terminal: codex exec \"Reply only with CODEX_WORKS\"")
 print("Source CVs:")
 for src in configured_cv_sources(cfg):
     print("  -", src.key, "->", src.path)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, unquote
 
 import requests
 from bs4 import BeautifulSoup
@@ -76,6 +76,93 @@ def _field_from_plain(plain: str, label: str, next_labels: list[str]) -> str:
     return re.sub(r"\s+", " ", m.group(1)).strip(" :-") if m else ""
 
 
+def _strict_labeled_field(plain: str, labels: list[str], next_labels: list[str]) -> str:
+    """Extract ATS metadata labels without matching normal prose such as 'company and ...'."""
+    label_alt = "|".join(re.escape(x) for x in labels)
+    stop_alt = "|".join(re.escape(x) for x in next_labels)
+    if stop_alt:
+        pattern = rf"(?:^|\s)(?:{label_alt})\s*:\s*(.+?)(?=\s+(?:{stop_alt})\s*:|$)"
+    else:
+        pattern = rf"(?:^|\s)(?:{label_alt})\s*:\s*(.+?)(?=$)"
+    m = re.search(pattern, plain, flags=re.I | re.S)
+    return re.sub(r"\s+", " ", m.group(1)).strip(" :-") if m else ""
+
+
+def _generic_portal_title(value: str) -> bool:
+    t = (value or "").strip().lower()
+    return (
+        not t
+        or t in {"job", "job details", "careers"}
+        or "welcome to tüv süd group job portal" in t
+        or "tüv süd group careers" in t
+    )
+
+
+def _successfactors_title_from_url(url: str) -> str:
+    parts = [unquote(p) for p in urlsplit(url).path.split("/") if p]
+    try:
+        idx = parts.index("job")
+    except ValueError:
+        return ""
+    if idx + 1 >= len(parts):
+        return ""
+    slug = parts[idx + 1]
+    title = re.sub(r"-+", " ", slug).strip()
+    # Some SuccessFactors slugs append a duplicate-number suffix before the requisition segment.
+    title = re.sub(r"\s+1$", "", title).strip()
+    return title
+
+
+def _successfactors_title_from_plain(plain: str) -> str:
+    low = plain.lower()
+    starts = []
+    for marker in ("Job Description", "Stellenbeschreibung"):
+        i = low.find(marker.lower())
+        if i >= 0:
+            starts.append((i, marker))
+    if not starts:
+        return ""
+    _, marker = min(starts)
+    after = plain[low.find(marker.lower()) + len(marker):].strip()
+    stop_markers = [
+        "At TÜV SÜD", "At TÜV SÜD Group", "Innovationen bringen",
+        "Your Tasks", "Tasks", "Aufgaben", "Qualifications", "Qualifikationen",
+    ]
+    positions = [after.lower().find(x.lower()) for x in stop_markers if after.lower().find(x.lower()) > 0]
+    if positions:
+        after = after[:min(positions)]
+    candidate = re.sub(r"\s+", " ", after).strip(" :-")
+    return candidate[:240] if 3 <= len(candidate) <= 240 else ""
+
+
+def _successfactors_description(plain: str, title: str) -> str:
+    text = plain
+    low = text.lower()
+    start = -1
+    marker_len = 0
+    for marker in ("Job Description", "Stellenbeschreibung"):
+        i = low.find(marker.lower())
+        if i >= 0 and (start < 0 or i < start):
+            start, marker_len = i, len(marker)
+    if start >= 0:
+        text = text[start + marker_len:].strip()
+    if title and text.lower().startswith(title.lower()):
+        text = text[len(title):].strip()
+
+    end_markers = [
+        "At TÜV SÜD, we have employees from more than 100",
+        "At TÜV SÜD Group, we have employees from more than 100",
+        "Bei TÜV SÜD arbeiten Menschen aus mehr als 100",
+        "Bei der TÜV SÜD Gruppe arbeiten Menschen aus mehr als 100",
+        "Work Area:", "Zielgruppe:",
+    ]
+    low2 = text.lower()
+    positions = [low2.find(x.lower()) for x in end_markers if low2.find(x.lower()) > 0]
+    if positions:
+        text = text[:min(positions)]
+    return re.sub(r"\s+", " ", text).strip()[:20000]
+
+
 def _source_id_from_url(url: str) -> str:
     path = urlsplit(url).path
     # Ashby UUID
@@ -126,15 +213,27 @@ def _apply_jsonld(job: Job, jp: dict):
         job.metadata["valid_through"] = str(jp.get("validThrough"))
 
 
-def _apply_successfactors(job: Job, plain: str):
-    labels = ["Work Area", "Country/Region", "Job Location", "Working Model", "Employment Type", "Company", "Org Unit Code", "Requisition ID"]
-    company = _field_from_plain(plain, "Company", ["Org Unit Code", "Requisition ID"])
-    location = _field_from_plain(plain, "Job Location", ["Working Model", "Employment Type", "Company", "Org Unit Code", "Requisition ID"])
-    employment = _field_from_plain(plain, "Employment Type", ["Company", "Org Unit Code", "Requisition ID"])
-    working_model = _field_from_plain(plain, "Working Model", ["Employment Type", "Company", "Org Unit Code", "Requisition ID"])
-    req = _field_from_plain(plain, "Requisition ID", [])
-    job.company = _first(job.company, company)
-    job.location = _first(job.location, location)
+def _apply_successfactors(job: Job, plain: str, url: str):
+    # SuccessFactors pages contain ordinary prose using words such as "company".
+    # Metadata extraction therefore requires real colon-labelled fields.
+    all_next = [
+        "Work Area", "Zielgruppe", "Country/Region", "Land / Region",
+        "Job Location", "Standort", "Working Model", "Arbeitsmodell",
+        "Employment Type", "Beschäftigungsart", "Company", "Gesellschaft",
+        "Org Unit Code", "Organisationseinheit", "Requisition ID", "Anf.-Kennung",
+        "Duration in months (if limited contract)", "Befristungsdauer in Monaten",
+    ]
+    company = _strict_labeled_field(plain, ["Company", "Gesellschaft"], ["Org Unit Code", "Organisationseinheit", "Requisition ID", "Anf.-Kennung", "Duration in months (if limited contract)"])
+    location = _strict_labeled_field(plain, ["Job Location", "Standort"], ["Working Model", "Arbeitsmodell", "Employment Type", "Beschäftigungsart", "Company", "Gesellschaft", "Org Unit Code", "Organisationseinheit", "Requisition ID", "Anf.-Kennung"])
+    employment = _strict_labeled_field(plain, ["Employment Type", "Beschäftigungsart"], ["Company", "Gesellschaft", "Org Unit Code", "Organisationseinheit", "Requisition ID", "Anf.-Kennung", "Duration in months (if limited contract)"])
+    working_model = _strict_labeled_field(plain, ["Working Model", "Arbeitsmodell"], ["Employment Type", "Beschäftigungsart", "Company", "Gesellschaft", "Org Unit Code", "Organisationseinheit", "Requisition ID", "Anf.-Kennung"])
+    req = _strict_labeled_field(plain, ["Requisition ID", "Anf.-Kennung"], ["Duration in months (if limited contract)", "Befristungsdauer in Monaten", "Cookie Consent Manager"])
+
+    extracted_title = _successfactors_title_from_plain(plain) or _successfactors_title_from_url(url)
+    if _generic_portal_title(job.title) and extracted_title:
+        job.title = extracted_title
+    job.company = company or job.company
+    job.location = location or job.location
     if employment:
         job.metadata["employment_type_raw"] = employment
     if working_model:
@@ -143,6 +242,10 @@ def _apply_successfactors(job: Job, plain: str):
         m = re.search(r"\d+", req)
         if m:
             job.source_id = m.group(0)
+
+    cleaned = _successfactors_description(plain, job.title)
+    if len(cleaned) >= 120:
+        job.description = cleaned
 
 
 def _apply_ashby(job: Job, plain: str, url: str):
@@ -201,7 +304,7 @@ def check_and_enrich(job: Job, timeout: int = 20) -> tuple[str, Job]:
         job.title = title[:220].strip()
 
     if "jobs.tuvsud.com" in host:
-        _apply_successfactors(job, plain_full)
+        _apply_successfactors(job, plain_full, final_url)
         job.metadata["platform"] = "successfactors"
     elif host.endswith("ashbyhq.com"):
         _apply_ashby(job, plain_full, final_url)
