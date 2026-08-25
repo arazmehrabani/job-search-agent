@@ -66,7 +66,8 @@ NEGATIVE_TITLE_GROUPS = {
     "BUSINESS_SALES_MARKETING": (
         "account executive", "sales manager", "sales development", "pre-sales", "presales", "customer success",
         "marketing", "business development", "commercial manager", "founders associate", "client success",
-        "partner sales", "revenue", "gtm ", "go-to-market",
+        "partner sales", "revenue", "gtm ", "go-to-market", "customer support engineer",
+        "tender manager", "bid manager", "proposal manager",
     ),
     "FINANCE_HR_ADMIN": (
         "finance", "accounting", "payroll", "human resources", " hr ", "recruit", "talent acquisition",

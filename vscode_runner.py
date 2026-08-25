@@ -1,8 +1,8 @@
 # %% [markdown]
-# JOB SEARCH AGENT V1.8.1 — VS CODE / CONDA RUNNER
+# JOB SEARCH AGENT V1.8.2 HOTFIX 1 — VS CODE / CONDA RUNNER
 #
 # Select the Conda interpreter named `agent`, then run cells with Shift+Enter.
-# V1.8.1 adds a domain relevance gate, domain-anchored PRE scoring, relevance-first AI budgeting,
+# V1.8.2 adds a domain relevance gate, domain-anchored PRE scoring, relevance-first AI budgeting,
 # tighter search queries and a dashboard that hides hard rejects by default. V1.6/V1.7 safety/discovery remains.
 
 # %% SETUP — Shift+Enter
@@ -19,7 +19,7 @@ os.chdir(PROJECT_ROOT)
 
 from src.config import load_config
 from src.db import Database
-from src.pipeline import run_pipeline, build_sources
+from src.pipeline import run_pipeline, build_sources, resume_application_packages
 from src.dashboard import build_dashboard
 from src.dashboard_server import serve_dashboard
 from src.digest import build_digest
@@ -42,13 +42,53 @@ def run_once(dry_run: bool = False):
     db = Database(DB_FILE)
     try:
         backend = AIEngine(cfg).backend_name()
-        print(f"\n=== Job Agent V1.8.1 | AI backend: {backend} | dry_run={dry_run} ===")
+        mode = "MATCH_ONLY" if dry_run else "FULL_APPLICATION_PREP"
+        print(f"\n=== Job Agent V1.8.2 Hotfix 1 | AI backend: {backend} | mode={mode} ===")
+        if dry_run:
+            print("MATCH_ONLY: discovery + matching will run, but CV/cover-letter generation and desktop notifications are DISABLED.")
+        else:
+            print("FULL_APPLICATION_PREP: eligible deep-matched jobs may generate CV + cover-letter packages and desktop notifications. Applications are NEVER auto-submitted.")
         result = run_pipeline(cfg, db, dry_run=dry_run)
         dashboard = build_dashboard(db, cfg=cfg)
         digest = build_digest(db, min_priority=int(cfg.get("notifications", {}).get("digest_priority_min", 68)))
         print(json.dumps(result, ensure_ascii=False, indent=2))
         print("Dashboard:", Path(dashboard).resolve())
         print("Review digest:", Path(digest).resolve())
+        if dry_run:
+            print(f"MATCH_ONLY finished: {result.get('packages_would_generate', 0)} package(s) would be eligible in full mode; no application files were written.")
+        else:
+            print(f"FULL run finished: {result.get('ready_packages', 0)} ready package(s), {result.get('packages_needing_ai_or_review', 0)} package(s) needing review, {result.get('notifications_sent', 0)} desktop notification(s) sent.")
+        return result
+    finally:
+        db.close()
+
+
+def match_only():
+    """Discovery + matching only. Does NOT create CV/cover-letter files or notifications."""
+    return run_once(dry_run=True)
+
+
+def prepare_applications():
+    """Full agent run: generate eligible CV/cover-letter packages + notifications; never auto-submit."""
+    return run_once(dry_run=False)
+
+
+def resume_packages():
+    """Recovery mode: create documents from cached deep matches only; no new search/job matching."""
+    cfg = load_config(CONFIG_FILE)
+    db = Database(DB_FILE)
+    try:
+        backend = AIEngine(cfg).backend_name()
+        print(f"\n=== Job Agent V1.8.2 Hotfix 1 | AI backend: {backend} | mode=RESUME_PACKAGES_ONLY ===")
+        print("RECOVERY: no discovery, page fetching, job screening, or deep job matching will run.")
+        print("Only cached completed deep matches are used to create CV/cover-letter packages. Applications are NEVER auto-submitted.")
+        result = resume_application_packages(cfg, db)
+        dashboard = build_dashboard(db, cfg=cfg)
+        digest = build_digest(db, min_priority=int(cfg.get("notifications", {}).get("digest_priority_min", 68)))
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        print("Dashboard:", Path(dashboard).resolve())
+        print("Review digest:", Path(digest).resolve())
+        print("Recovery report:", Path("output/resume_packages_report.json").resolve())
         return result
     finally:
         db.close()
@@ -132,10 +172,16 @@ for q in queries: print(" -", q)
 print("Full plan: output/search_plan.json")
 
 # %% TEST RUN — Shift+Enter
-result = run_once(dry_run=True)
+# MATCH ONLY — no CV/cover-letter files or notifications
+# result = match_only()
 
 # %% RUN ONCE — Shift+Enter
-# result = run_once(dry_run=False)
+# FULL APPLICATION PREP — generates eligible CV/cover-letter packages; never submits
+# result = prepare_applications()
+
+# %% RECOVER DOCUMENTS AFTER AN INTERRUPTED FULL RUN — Shift+Enter
+# Uses existing cached deep matches. No new discovery/screening/deep job matching.
+result = resume_packages()
 
 # %% INTERACTIVE DASHBOARD — Shift+Enter
 # Opens http://127.0.0.1:8765 with APPLY / SAVE / SKIP buttons.

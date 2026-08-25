@@ -98,8 +98,15 @@ def _analysis_details(m: dict, summary: str = "analysis") -> str:
     agent_action = _esc(str(m.get("decision", "") or ""))
     screen_decision = _esc(str(m.get("screen_decision", "") or ""))
     screen_score = int(m.get("screen_score", 0) or 0)
+    evaluation_stage = str(m.get("evaluation_stage", "") or "").lower()
+    deep_pending = bool(m.get("deep_pending", False))
 
     parts = []
+    if evaluation_stage:
+        stage_text = {"pre": "PRE only", "screen": "AI SCREEN", "deep": "DEEP AI complete"}.get(evaluation_stage, evaluation_stage.upper())
+        if deep_pending:
+            stage_text += " · deep review pending"
+        parts.append(f"<div><b>Evaluation:</b> {_esc(stage_text)}</div>")
     if any((tech, exp, language_fit, edu)):
         parts.append(
             f"<div class='fitgrid'><span>Technical <b>{tech}</b></span><span>Experience <b>{exp}</b></span>"
@@ -144,6 +151,8 @@ def _render_main_row(r) -> str:
     priority = int(r["priority_score"] or m.get("priority_score", 0) or 0) if r["match_score"] is not None else None
     match_source = str(m.get("source", "") or "")
     source_kind = "PRE" if match_source == "heuristic" else ("SCREEN" if match_source == "ai_screen" else ("AI" if match_source else ""))
+    if bool(m.get("deep_pending", False)) and source_kind in {"PRE", "SCREEN"}:
+        source_kind += "·PENDING"
     lang = _esc(str(m.get("job_language", ""))).upper()
     stage, schedule, contract = map(_pretty, (m.get("career_stage", ""), m.get("schedule", ""), m.get("contract", "")))
     german_req, german_tip = _german_display(m)
@@ -226,6 +235,17 @@ def build_dashboard(db: Database, output="output/dashboard.html", feedback_token
     cost = float(usage.get("estimated_cost_usd", 0) or 0); cost_text = f"${cost:.2f}" if cost > 0 else "—"
     ops = last_run.get("usage_by_operation_this_run", []) or []
     ops_note = ", ".join(f"{x.get('operation')}: {x.get('calls', 0)}" for x in ops) or "no AI calls in last run"
+    run_calls = int(run_usage.get("calls", 0) or 0)
+    run_success = int(run_usage.get("successful_calls", run_calls) if run_usage.get("successful_calls", None) is not None else run_calls)
+    run_failed = max(0, run_calls - run_success)
+    run_mode = str(last_run.get("execution_mode", "UNKNOWN") or "UNKNOWN")
+    packages_would = int(last_run.get("packages_would_generate", 0) or 0)
+    packages_ready_run = int(last_run.get("packages_ready", 0) or 0)
+    notifications_sent = int(last_run.get("notifications_sent", 0) or 0)
+    stage_seconds = last_run.get("stage_seconds", {}) or {}
+    http_stats = last_run.get("http", {}) or {}
+    stage_note = ", ".join(f"{k.replace('_seconds','')}: {float(v):.1f}s" for k,v in stage_seconds.items() if k != "total_seconds")
+    http_note = ", ".join(f"{k}: {v}" for k,v in http_stats.items())
 
     main_html = "".join(_render_main_row(r) for r in main_rows)
     audit_limit = int(dcfg.get("audit_limit", 250) or 250)
@@ -250,24 +270,29 @@ details{{margin-top:6px;color:var(--muted);font-size:10.5px}} summary{{cursor:po
 .decision-current{{font-weight:700;font-size:11px}} .decision-buttons{{display:flex;gap:3px;margin-top:5px;flex-wrap:wrap}} .decision-buttons button{{border:1px solid #d6dbe1;background:#fff;border-radius:5px;padding:3px 5px;font-size:9px;cursor:pointer}} .decision-buttons.disabled button{{opacity:.35;cursor:not-allowed}}
 .audit{{margin-top:14px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:9px 11px}} .audit table{{min-width:1100px;table-layout:auto}} .audit th{{position:static}}
 .empty{{padding:20px;color:var(--muted);text-align:center}} tr:hover td{{background:#fbfcfd}} @media(max-width:900px){{.shell{{padding:13px}}}}
-</style></head><body><div class='shell'><h1>Job Search Agent V1.8.1</h1>
-<p class='note'><b>Main list = jobs worth your attention.</b> Obvious wrong-domain jobs and Priority REJECT rows are hidden in the audit section below. PRE is a local domain-anchored pre-score; SCREEN/AI are Codex/API assessments.</p>
+</style></head><body><div class='shell'><h1>Job Search Agent V1.8.2</h1>
+<p class='note'><b>Main list = jobs worth your attention.</b> PRE/SCREEN rows are triage only; final HIGH/APPLY and automatic application packages require a completed DEEP AI assessment. MATCH_ONLY runs intentionally suppress CV/cover-letter generation and desktop notifications.</p>
 <div class='cards'>
+<div class='card'><b>Run mode</b><div class='n'>{_esc(run_mode)}</div><div class='sub'>{'documents + notifications enabled' if run_mode == 'FULL_APPLICATION_PREP' else 'documents + notifications SUPPRESSED'}</div></div>
 <div class='card'><b>Auto discovery</b><div class='n'>{discovery_text}</div><div class='sub'>{_esc(discovery_note[:58])}</div></div>
 <div class='card'><b>Raw discovered</b><div class='n'>{discovery.get('raw_results',0) or 0}</div></div>
 <div class='card'><b>Title-gate rejects</b><div class='n'>{discovery.get('title_gate_rejected',0) or 0}</div></div>
-<div class='card'><b>Freshness filtered</b><div class='n'>{discovery.get('freshness_filtered',0) or 0}</div></div>
+<div class='card'><b>Freshness filtered this run</b><div class='n'>{discovery.get('freshness_filtered',0) or 0}</div></div>
 <div class='card'><b>Eligible after relevance</b><div class='n'>{discovery.get('eligible_after_relevance_filters',0) or 0}</div></div>
 <div class='card'><b>High</b><div class='n'>{high}</div></div><div class='card'><b>Review</b><div class='n'>{review}</div></div><div class='card'><b>Possible</b><div class='n'>{possible}</div></div>
-<div class='card'><b>Ready packages</b><div class='n'>{stats.get('packages',0) or 0}</div></div>
-<div class='card'><b>AI calls this run</b><div class='n'>{run_usage.get('calls',0) or 0}</div><div class='sub' title='{_esc(ops_note)}'>{_esc(ops_note[:58])}</div></div>
-<div class='card'><b>Tokens this run</b><div class='n'>{token_run:,}</div></div>
-<div class='card'><b>AI calls today</b><div class='n'>{usage.get('calls',0) or 0}</div></div><div class='card'><b>Tokens today</b><div class='n'>{token_today:,}</div></div><div class='card'><b>API cost*</b><div class='n'>{cost_text}</div></div>
+<div class='card'><b>Packages ready this run</b><div class='n'>{packages_ready_run}</div><div class='sub'>all-time ready: {stats.get('packages',0) or 0}</div></div>
+<div class='card'><b>Would generate in full mode</b><div class='n'>{packages_would}</div><div class='sub'>shown in MATCH_ONLY instead of writing files</div></div>
+<div class='card'><b>Notifications sent</b><div class='n'>{notifications_sent}</div></div>
+<div class='card'><b>AI calls this run</b><div class='n'>{run_calls}</div><div class='sub' title='{_esc(ops_note)}'>successful {run_success} · failed {run_failed} · {_esc(ops_note[:36])}</div></div>
+<div class='card'><b>Failed Codex calls</b><div class='n'>{run_failed}</div></div>
+<div class='card'><b>Estimated text tokens</b><div class='n'>~{token_run:,}</div><div class='sub'>local estimate · not official account usage</div></div>
+<div class='card'><b>Total runtime</b><div class='n'>{float(stage_seconds.get('total_seconds',0) or 0):.1f}s</div><div class='sub' title='{_esc(stage_note)}'>{_esc(stage_note[:58])}</div></div>
+<div class='card'><b>HTTP page/cache</b><div class='n'>{http_stats.get('page_fetches',0) or 0}/{http_stats.get('cache_hits',0) or 0}</div><div class='sub' title='{_esc(http_note)}'>fetches / cache hits</div></div>
 </div>
 <details style='margin:0 0 12px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px 11px'><summary><b>Discovery source health</b></summary><div style='margin-top:7px'>{''.join(f"<div><b>{_esc(x.get('name'))}</b> — {_esc(x.get('category'))} — {'OK' if x.get('success') else ('READY' if x.get('operational') else 'OFF')} — {_esc(x.get('results',0))} result(s) — {_esc(x.get('error') or x.get('reason') or '')}</div>" for x in source_rows)}</div></details>
 <h2>Jobs worth your attention</h2><div class='tablewrap'><table><thead><tr><th>Fit</th><th>Priority</th><th>Role</th><th>Company</th><th>Location</th><th>Lang</th><th>Employment</th><th>German</th><th>Career family</th><th>Your decision</th><th>Source CV</th><th>Date</th><th>Source</th><th>Live</th><th>Status</th></tr></thead><tbody>{main_html if main_html else "<tr><td colspan='15' class='empty'>No actionable jobs yet.</td></tr>"}</tbody></table></div>
 <details class='audit'><summary><b>Rejected / filtered audit ({len(audit_rows)})</b> — hidden by default</summary><p class='note'>These rows stay in the database for transparency, but they do not consume your normal review attention. AI-evaluated rejects keep their full reasoning under <b>why rejected</b>.</p><div class='tablewrap'><table><thead><tr><th>Fit</th><th>Priority</th><th>Role / explanation</th><th>Company</th><th>Reason</th><th>Source</th></tr></thead><tbody>{audit_html}</tbody></table></div></details>
-<p class='note' style='margin-top:10px'>*API cost appears only when explicit token prices are configured.</p>
+<p class='note' style='margin-top:10px'>Codex CLI token counts are local text-length estimates for telemetry, not official ChatGPT/Codex plan usage or billing data.</p>
 </div><script>
 const feedbackToken="__FEEDBACK_TOKEN__";
 async function sendFeedback(fp,decision){{if(location.protocol==='file:'){{alert('Feedback is read-only in file:// mode. Run: python agent.py serve');return;}}let reason='';if(['SKIP','REJECTED'].includes(decision))reason=prompt('Optional reason:','')||'';const r=await fetch('/api/feedback',{{method:'POST',headers:{{'Content-Type':'application/json','X-Job-Agent-Token':feedbackToken}},body:JSON.stringify({{fingerprint:fp,decision:decision,reason:reason}})}});if(!r.ok){{alert('Could not save feedback');return;}}location.reload();}}

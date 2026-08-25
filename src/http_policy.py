@@ -46,7 +46,7 @@ class HttpPolicy:
         self.robots_cache_hours = max(0.0, float(hcfg.get("robots_cache_hours", 12) or 0.0))
         self.max_body_chars = max(50_000, int(hcfg.get("max_cached_body_chars", 750_000) or 750_000))
         self.timeout = max(3, int(hcfg.get("timeout_seconds", 20) or 20))
-        self.user_agent = str(hcfg.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) JobSearchAgent/1.8.1"))
+        self.user_agent = str(hcfg.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) JobSearchAgent/1.8.2"))
         self.robots_user_agent = str(hcfg.get("robots_user_agent", "JobSearchAgent"))
         self.cache_file = Path(str(hcfg.get("cache_file", "output/http_cache.json")))
         self.session = requests.Session()
@@ -54,6 +54,15 @@ class HttpPolicy:
         self._robots_mem: dict[str, tuple[float, RobotFileParser | None, bool]] = {}
         self._lock = threading.Lock()
         self._cache = self._load_cache()
+        self._stats = {
+            "page_fetches": 0,
+            "cache_hits": 0,
+            "network_requests": 0,
+            "robots_requests": 0,
+            "retries": 0,
+            "errors": 0,
+            "throttle_sleep_seconds": 0.0,
+        }
 
     def _load_cache(self) -> dict:
         if self.cache_minutes <= 0 and self.robots_cache_hours <= 0:
@@ -92,6 +101,7 @@ class HttpPolicy:
             wait = target - (time.monotonic() - last)
             if wait > 0:
                 time.sleep(wait)
+                self._stats["throttle_sleep_seconds"] += float(wait)
             self._last_request[host] = time.monotonic()
 
     def _raw_get(self, url: str, timeout: int | None = None) -> requests.Response:
@@ -110,6 +120,7 @@ class HttpPolicy:
             retryable = response.status_code == 429 or 500 <= response.status_code <= 599
             if not retryable or attempt >= attempts - 1:
                 return response
+            self._stats["retries"] += 1
             wait = self._retry_wait(response, attempt)
             if wait > 0:
                 time.sleep(wait)
@@ -156,6 +167,8 @@ class HttpPolicy:
 
         robots_url = f"{urlsplit(url).scheme}://{host}/robots.txt"
         try:
+            self._stats["robots_requests"] += 1
+            self._stats["network_requests"] += 1
             r = self._raw_get(robots_url, timeout=min(self.timeout, 12))
             if r.status_code == 404:
                 rp = RobotFileParser(); rp.set_url(robots_url); rp.parse([])
@@ -202,18 +215,27 @@ class HttpPolicy:
             from_cache=True,
         )
 
+    def stats(self) -> dict:
+        out = dict(self._stats)
+        out["throttle_sleep_seconds"] = round(float(out.get("throttle_sleep_seconds", 0.0)), 3)
+        return out
+
     def fetch(self, url: str, timeout: int | None = None, force_refresh: bool = False) -> FetchResult:
+        self._stats["page_fetches"] += 1
         if not is_safe_http_url(url):
             return FetchResult(url=str(url or ""), robots_allowed=False, error="unsafe_url_scheme")
         if not force_refresh:
             cached = self._cached_page(url)
             if cached is not None:
+                self._stats["cache_hits"] += 1
                 return cached
         if not self.robots_allowed(url):
             return FetchResult(url=url, robots_allowed=False, error="robots_disallowed")
         try:
+            self._stats["network_requests"] += 1
             r = self._raw_get(url, timeout=timeout)
         except Exception as exc:
+            self._stats["errors"] += 1
             return FetchResult(url=url, error=str(exc))
         result = FetchResult(
             status_code=int(r.status_code),

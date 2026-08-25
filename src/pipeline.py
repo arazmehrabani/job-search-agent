@@ -1,9 +1,10 @@
 from __future__ import annotations
 import json
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .models import MatchResult
+from .models import Job, MatchResult
 from .db import Database
 from .sources.adzuna import AdzunaSource
 from .sources.arbeitsagentur import ArbeitsagenturSource
@@ -32,7 +33,7 @@ from .cv_sources import select_cv_source
 from .evidence import load_evidence_registry, retrieve_evidence, evidence_by_ids
 from .priority import calculate_priority
 from .feedback import family_feedback_adjustments, write_feedback_summary
-from .utils import canonical_url, source_identity, is_safe_http_url
+from .utils import canonical_url, source_identity, is_safe_http_url, parse_datetime
 
 
 def load_profile(path: str) -> dict:
@@ -206,6 +207,8 @@ def _write_last_run_report(report: dict, path: str = "output/last_run_report.jso
 
 
 def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
+    run_started = time.perf_counter()
+    stage_marks = {}
     profile = load_profile(cfg.get("documents", {}).get("profile", "input/profile.json"))
     db.configure_telemetry(cfg)
     ai = AIEngine(cfg, usage_recorder=db.record_usage)
@@ -254,10 +257,11 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
             errors.append(f"{src.name}: {exc}")
         source_reports.append(rep)
 
+    stage_marks["discovery_seconds"] = round(time.perf_counter() - run_started, 3)
     broad_success = [x for x in source_reports if x.get("category") == "broad" and x.get("automatic") and x.get("success")]
     auto_discovery_active = bool(broad_success)
     discovery_report = {
-        "version": "1.8.1",
+        "version": "1.8.2-hotfix1",
         "automatic_discovery_active": auto_discovery_active,
         "planned_queries": len(queries),
         "sources": source_reports,
@@ -294,6 +298,19 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
             db.set_filter_reason(fp, title_gate.reason)
             title_gate_rejected += 1
             continue
+
+        # If a discovery source already supplied a meaningful full description (for
+        # example Arbeitnow), use that text for the post-title relevance gate BEFORE
+        # making another HTTP request. This safely saves page checks for clearly
+        # unrelated jobs without imposing a hard enrichment cap on good vacancies.
+        if len((job.description or "").strip()) >= 160 and job.source != "manual":
+            pre_page_relevance = assess_relevance(job, cfg)
+            if not pre_page_relevance.keep:
+                fp = db.upsert_job(job)
+                db.set_active(fp, "unknown")
+                db.set_filter_reason(fp, pre_page_relevance.reason)
+                post_enrichment_rejected += 1
+                continue
 
         # V1.8.1 staged freshness policy: 0-14 days remain fully eligible; 15-30 day
         # jobs may continue if the detail page confirms they are live; 31-45 day jobs
@@ -393,44 +410,197 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
         "eligible_after_relevance_filters": len(candidates),
     })
     _write_discovery_report(discovery_report)
+    stage_marks["enrichment_filtering_seconds"] = round(time.perf_counter() - run_started - stage_marks.get("discovery_seconds", 0.0), 3)
 
     screened = 0
     deep_evaluated = 0
     evaluated = 0
     strong, packages, not_ready = [], [], []
+    package_errors = []
+    would_generate = []
+    notifications_sent = 0
 
-    # Phase 2: tiered AI, in ranked order.
+    # Phase 2a: run compact screening first for the whole eligible queue (within the
+    # configured screen budget). Deep slots are NOT consumed here. This prevents an
+    # early source result from taking a deep-analysis slot before a stronger job later
+    # in the same run has even been screened.
+    tiered = cfg.get("ai", {}).get("tiered", {}) or {}
+    tiered_enabled = bool(tiered.get("enabled", True))
+    screen_min = int(tiered.get("screen_min_pre_score", 40))
+    max_screen = int(tiered.get("max_screen_per_run", 24))
+    max_deep = int(tiered.get("max_deep_per_run", 10))
+    deep_min = int(tiered.get("deep_min_screen_score", 58))
+    force_pre = int(tiered.get("deep_force_pre_score", 72))
+    force_manual_cfg = bool(tiered.get("manual_force_screen", True))
+    screen_limit = int(tiered.get("screen_evidence_limit", 8))
+    deep_limit = int(tiered.get("deep_evidence_limit", 16))
+
+    work = []
     for c in candidates:
-        job, fp, active, context, source_cv = c["job"], c["fp"], c["active"], c["context"], c["source_cv"]
+        job, fp, context = c["job"], c["fp"], c["context"]
         state = db.get_job_state(fp) or {}
-        match = _match_from_json(state.get("match_json"))
-        # Deep AI and HOLD/SKIP screens are cached. Cheap heuristic rows are refreshed
-        # so parser fixes/new Codex availability can upgrade them automatically.
-        should_refresh = match is None or match.source == "heuristic" or match.analysis_version != "1.8.1"
-        if should_refresh:
-            match, screened, deep_evaluated = _evaluate_job(
-                job, profile, context, cfg, ai, registry, screened, deep_evaluated
+        cached = _match_from_json(state.get("match_json"))
+        cached_pending_screen = bool(
+            cached is not None
+            and cached.analysis_version == "1.8.2"
+            and cached.source == "ai_screen"
+            and cached.deep_pending
+        )
+        should_refresh = cached is None or cached.source == "heuristic" or cached.analysis_version != "1.8.2"
+        item = dict(c)
+        item["state_before"] = state
+        item["screen"] = None
+        item["screen_evidence"] = []
+        item["needs_deep"] = False
+        item["deep_rank"] = -1.0
+
+        if cached_pending_screen:
+            # A good screen from a previous cycle that missed the deep budget should
+            # compete for a deep slot now without paying for the same screen again.
+            match = cached
+            item["screen"] = {
+                "screen_score": int(cached.screen_score or cached.score or c["base"]),
+                "decision": str(cached.screen_decision or "PROMOTE"),
+                "reason": cached.reasoning,
+                "mandatory_gaps": list(cached.missing_required or []),
+                "evidence_ids": list(cached.evidence_ids or []),
+            }
+            item["needs_deep"] = True
+            sscore = int(item["screen"]["screen_score"] or c["base"])
+            sdecision = str(item["screen"]["decision"] or "PROMOTE").upper()
+            tier_bonus = {"core": 24, "adjacent": 10, "stretch": 0}.get(str(context.get("career_tier", "adjacent")), 6)
+            decision_bonus = 10 if sdecision == "PROMOTE" else 0
+            item["deep_rank"] = (
+                sscore * 2.0 + float(c["base"]) + float(c["relevance_rank"]) * 0.35
+                + float(c["freshness_rank"]) * 3.0 + tier_bonus + decision_bonus
+                + (8 if job.source == "manual" else 0)
             )
+        elif not should_refresh:
+            # Current completed deep/HOLD analyses may be reused; context fields are
+            # refreshed below before priority is recomputed.
+            match = cached
+        elif not ai.enabled:
+            evidence = retrieve_evidence(job, registry, limit=screen_limit, career_family=context["career_family"])
+            ids = [str(x.get("id")) for x in evidence if x.get("id")]
+            match = ai.heuristic_match(job, profile, context, ids)
             evaluated += 1
-            a = age_days(job)
-            if job.source == "manual" and a is not None and a > freshness_limits(cfg)["full"]:
-                warning = f"Vacancy is about {int(a)} days old, but it was evaluated because you supplied the URL manually."
-                if warning not in match.risks:
-                    match.risks.append(warning)
+        elif not tiered_enabled:
+            # Compatibility mode: a non-tiered configuration still performs a full
+            # match for every refreshed candidate.
+            lexical = retrieve_evidence(job, registry, limit=deep_limit, career_family=context["career_family"])
+            semantic_ids = ai.select_evidence(job, profile, registry, context, lexical, limit=deep_limit)
+            deep_evidence = evidence_by_ids(semantic_ids, registry) or lexical
+            match = ai.match(job, profile, deep_evidence, context=context, base_score=c["base"])
+            deep_evaluated += 1
+            evaluated += 1
         else:
-            match.job_language = context["job_language"]
-            match.employment_type = context["employment_type"]
-            match.career_stage = context["career_stage"]
-            match.schedule = context["schedule"]
-            match.contract = context["contract"]
-            match.career_family = context["career_family"]
-            match.career_family_label = context["career_family_label"]
-            match.career_tier = context["career_tier"]
-            match.source_cv = context["source_cv"]
-            match.german_requirement = context["german_requirement"]
+            force_manual = force_manual_cfg and job.source == "manual"
+            if c["base"] < screen_min and not force_manual:
+                evidence = retrieve_evidence(job, registry, limit=screen_limit, career_family=context["career_family"])
+                ids = [str(x.get("id")) for x in evidence if x.get("id")]
+                match = ai.heuristic_match(job, profile, context, ids)
+                evaluated += 1
+            elif screened >= max_screen:
+                evidence = retrieve_evidence(job, registry, limit=screen_limit, career_family=context["career_family"])
+                ids = [str(x.get("id")) for x in evidence if x.get("id")]
+                match = ai.heuristic_match(job, profile, context, ids)
+                match.deep_pending = bool(c["base"] >= force_pre)
+                match.decision_reasons.append("AI screening budget for this cycle was exhausted; retry on a later run.")
+                evaluated += 1
+            else:
+                evidence = retrieve_evidence(job, registry, limit=screen_limit, career_family=context["career_family"])
+                screen = ai.screen(job, profile, evidence, context, base_score=c["base"])
+                screened += 1
+                evaluated += 1
+                match = ai.screen_to_match(job, profile, evidence, context, c["base"], screen)
+                item["screen"] = screen
+                item["screen_evidence"] = evidence
+                sscore = int(screen.get("screen_score", c["base"]) or c["base"])
+                sdecision = str(screen.get("decision", "HOLD")).upper()
+                promote = sdecision == "PROMOTE" or sscore >= deep_min or c["base"] >= force_pre
+                item["needs_deep"] = bool(promote)
+                match.deep_pending = bool(promote)
+                if promote:
+                    tier_bonus = {"core": 24, "adjacent": 10, "stretch": 0}.get(str(context.get("career_tier", "adjacent")), 6)
+                    decision_bonus = 10 if sdecision == "PROMOTE" else 0
+                    item["deep_rank"] = (
+                        sscore * 2.0
+                        + float(c["base"])
+                        + float(c["relevance_rank"]) * 0.35
+                        + float(c["freshness_rank"]) * 3.0
+                        + tier_bonus
+                        + decision_bonus
+                        + (8 if job.source == "manual" else 0)
+                    )
+        item["match"] = match
+        work.append(item)
+
+    _elapsed_before_deep = time.perf_counter()
+    stage_marks["screening_seconds"] = round(_elapsed_before_deep - run_started - stage_marks.get("discovery_seconds", 0.0) - stage_marks.get("enrichment_filtering_seconds", 0.0), 3)
+
+    # Phase 2b: choose the best deep candidates only AFTER all compact screens are
+    # available. This is the V1.8.2 global deep-budget allocator.
+    deep_pool = [x for x in work if x.get("needs_deep")]
+    deep_pool.sort(key=lambda x: (x.get("deep_rank", -1), x.get("ordering_score", 0)), reverse=True)
+    selected_deep = {x["fp"] for x in deep_pool[:max_deep]}
+
+    for item in work:
+        if item["fp"] not in selected_deep:
+            if item.get("needs_deep"):
+                item["match"].deep_pending = True
+                note = "Promoted by AI screen, but not selected by the globally ranked deep-analysis budget; retry on a later run."
+                if note not in item["match"].decision_reasons:
+                    item["match"].decision_reasons.append(note)
+            continue
+        job, context = item["job"], item["context"]
+        lexical_deep = retrieve_evidence(job, registry, limit=deep_limit, career_family=context["career_family"])
+        semantic_enabled = bool(cfg.get("evidence", {}).get("semantic_selection", {}).get("enabled", True))
+        if semantic_enabled:
+            semantic_ids = ai.select_evidence(job, profile, registry, context, lexical_deep, limit=deep_limit)
+            deep_evidence = evidence_by_ids(semantic_ids, registry) or lexical_deep
+        else:
+            deep_evidence = lexical_deep
+        item["match"] = ai.match(
+            job, profile, deep_evidence, context=context, base_score=item["base"], screen_data=item.get("screen") or {}
+        )
+        item["match"].deep_pending = False
+        deep_evaluated += 1
+
+    stage_marks["deep_matching_seconds"] = round(time.perf_counter() - _elapsed_before_deep, 3)
+    _phase3_started = time.perf_counter()
+
+    # Phase 3: practical priority, persistence, packages and notifications.
+    for item in work:
+        job, fp, active, context, source_cv = item["job"], item["fp"], item["active"], item["context"], item["source_cv"]
+        match = item["match"]
+        # Keep dynamic context current even when an existing AI analysis was reused.
+        match.job_language = context["job_language"]
+        match.employment_type = context["employment_type"]
+        match.career_stage = context["career_stage"]
+        match.schedule = context["schedule"]
+        match.contract = context["contract"]
+        match.career_family = context["career_family"]
+        match.career_family_label = context["career_family_label"]
+        match.career_tier = context["career_tier"]
+        match.source_cv = context["source_cv"]
+        match.german_requirement = context["german_requirement"]
 
         adjustment = feedback_adjustments.get(context["career_family"], 0.0)
         pscore, plabel, preasons = calculate_priority(job, match, cfg, feedback_adjustment=adjustment)
+        deep_match = match.source in {"codex_cli", "openai_api"} and match.evaluation_stage == "deep"
+
+        # PRE/SCREEN are triage signals, not final application decisions. A promising
+        # incomplete evaluation can remain visible, but it cannot be labelled final
+        # HIGH/APPLY or trigger document generation until deep matching is complete.
+        if not deep_match and plabel == "HIGH":
+            high_min = int(cfg.get("priority", {}).get("high_min", 82))
+            pscore = min(pscore, max(0, high_min - 1))
+            plabel = "REVIEW"
+            pending_reason = "Final HIGH/APPLY status requires a completed deep AI assessment."
+            if pending_reason not in preasons:
+                preasons.append(pending_reason)
+            match.deep_pending = True
+
         match.priority_score = pscore
         match.priority_label = plabel
         match.priority_reasons = preasons
@@ -447,7 +617,6 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
         state = db.get_job_state(fp) or {}
         user_decision = str(state.get("user_decision", "") or "").upper()
         app_status = state.get("application_status")
-        deep_match = match.source in {"codex_cli", "openai_api"}
         legacy_package_needs_audit = False
         if state.get("has_application", False) and state.get("package_dir"):
             audit_required = bool(cfg.get("evidence", {}).get("semantic_audit", {}).get("required_for_ready", True))
@@ -458,29 +627,72 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
                     legacy_package_needs_audit = not bool(pdata.get("semantic_evidence_audit_ok"))
                 except Exception:
                     legacy_package_needs_audit = True
-        should_generate = (
+
+        package_eligible = (
             deep_match
             and match.priority_score >= package_priority
             and active != "expired"
             and user_decision not in {"SKIP", "NOT_INTERESTED"}
-            and not dry_run
             and (not state.get("has_application", False) or (app_status == "needs_ai_or_review" and ai.enabled) or legacy_package_needs_audit)
         )
-        if should_generate:
+        if package_eligible and dry_run:
+            would_generate.append({
+                "fingerprint": fp, "title": job.title, "company": job.company,
+                "fit": match.score, "priority": match.priority_score,
+            })
+
+        if package_eligible and not dry_run:
             doc_evidence = _document_evidence(job, match, registry, cfg)
-            pkg, res = generate_package(job, match, profile, cfg, ai, fp, source_cv, evidence_items=doc_evidence)
+            try:
+                pkg, res = generate_package(job, match, profile, cfg, ai, fp, source_cv, evidence_items=doc_evidence)
+            except Exception as exc:
+                # A single document/package failure must never abort the entire job-search run.
+                # Persist an actionable error record and continue with the remaining jobs.
+                err = {
+                    "fingerprint": fp, "title": job.title, "company": job.company,
+                    "fit": match.score, "priority": match.priority_score,
+                    "error_type": type(exc).__name__, "error": str(exc),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+                package_errors.append(err)
+                ep = Path("output/package_errors") / datetime.now().strftime("%Y-%m-%d") / f"{fp}.json"
+                ep.parent.mkdir(parents=True, exist_ok=True)
+                ep.write_text(json.dumps(err, ensure_ascii=False, indent=2), encoding="utf-8")
+                if match.priority_score >= immediate_priority:
+                    sent = notify(
+                        "High-priority package generation failed",
+                        f"{job.title} at {job.company} — document generation failed, but the agent continued. Error record: {ep}",
+                        desktop,
+                    )
+                    if sent:
+                        notifications_sent += 1
+                continue
             status = "package_ready" if res.get("ready") else "needs_ai_or_review"
             db.record_application(fp, str(pkg), status=status)
             if res.get("ready"):
                 packages.append((job, match, pkg, res))
                 if match.priority_score >= immediate_priority:
-                    notify(
+                    sent = notify(
                         "High-priority application ready",
                         f"{job.title} at {job.company} — Fit {match.score}, Priority {match.priority_score} ({match.priority_label}). Files: {pkg}",
                         desktop,
                     )
+                    if sent:
+                        notifications_sent += 1
             else:
                 not_ready.append((job, match, pkg, res))
+                if match.priority_score >= immediate_priority:
+                    sent = notify(
+                        "High-priority job needs package review",
+                        f"{job.title} at {job.company} — Fit {match.score}, Priority {match.priority_score} ({match.priority_label}). Package was created but is not READY; review: {pkg}",
+                        desktop,
+                    )
+                    if sent:
+                        notifications_sent += 1
+
+    stage_marks["priority_documents_notifications_seconds"] = round(time.perf_counter() - _phase3_started, 3)
+    stage_marks["total_seconds"] = round(time.perf_counter() - run_started, 3)
+    http_stats = page_checker.policy.stats() if page_checker is not None and hasattr(page_checker.policy, "stats") else {}
 
     write_feedback_summary(db, cfg)
     usage_after = db.usage_stats()
@@ -488,7 +700,7 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
     usage_this_run = _usage_delta(usage_before, usage_after)
     usage_ops_this_run = _operation_usage_delta(usage_ops_before, usage_ops_after)
     last_run_report = {
-        "version": "1.8.1",
+        "version": "1.8.2-hotfix1",
         "completed_at": datetime.now(timezone.utc).isoformat(),
         "ai_backend": ai.backend_name(),
         "dry_run": bool(dry_run),
@@ -502,6 +714,19 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
         "eligible_after_filters": len(candidates),
         "ai_screened": screened,
         "deep_ai_evaluated": deep_evaluated,
+        "execution_mode": "MATCH_ONLY" if dry_run else "FULL_APPLICATION_PREP",
+        "document_generation_enabled": not bool(dry_run),
+        "notifications_enabled": bool((not dry_run) and desktop),
+        "packages_would_generate": len(would_generate),
+        "package_candidates": would_generate[:25],
+        "packages_ready": len(packages),
+        "packages_needing_review": len(not_ready),
+        "package_generation_errors": len(package_errors),
+        "package_error_details": package_errors[:25],
+        "notifications_sent": notifications_sent,
+        "stage_seconds": stage_marks,
+        "http": http_stats,
+        "token_counts_note": "Estimated from text length for Codex CLI; not official OpenAI account usage or billing data.",
     }
     _write_last_run_report(last_run_report)
 
@@ -524,6 +749,13 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
         "strong_matches": len(strong),
         "ready_packages": len(packages),
         "packages_needing_ai_or_review": len(not_ready),
+        "package_generation_errors": len(package_errors),
+        "packages_would_generate": len(would_generate),
+        "package_candidates": would_generate[:25],
+        "notifications_sent": notifications_sent,
+        "execution_mode": "MATCH_ONLY" if dry_run else "FULL_APPLICATION_PREP",
+        "stage_seconds": stage_marks,
+        "http": http_stats,
         "errors": errors,
         "parse_failures": parse_failures,
         "usage_this_run": usage_this_run,
@@ -548,3 +780,101 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
             for j, m in strong
         ], key=lambda x: (x["priority"], x["fit"]), reverse=True)[:15],
     }
+
+def resume_application_packages(cfg: dict, db: Database) -> dict:
+    """Generate documents only from already completed deep matches in the database.
+
+    This recovery mode performs no discovery, page fetching, screening, semantic
+    evidence selection for job matching, or deep job matching.  It is intended after
+    an interrupted/crashed FULL_APPLICATION_PREP run so expensive completed matching
+    work can be reused.  Document tailoring, cover-letter generation and semantic
+    claim audit still use the configured AI backend because those are part of creating
+    the package itself.
+    """
+    started = time.perf_counter()
+    profile = load_profile(cfg.get("documents", {}).get("profile", "input/profile.json"))
+    db.configure_telemetry(cfg)
+    ai = AIEngine(cfg, usage_recorder=db.record_usage)
+    registry = load_evidence_registry(cfg)
+    package_priority = int(cfg.get("priority", {}).get("package_generation_min", 74))
+    immediate_priority = int(cfg.get("notifications", {}).get("immediate_priority_min", 82))
+    desktop = bool(cfg.get("notifications", {}).get("desktop", True))
+    usage_before = db.usage_stats(); ops_before = db.usage_by_operation()
+    ready = []; needs_review = []; errors = []; skipped_existing = 0; eligible = 0; notifications_sent = 0
+
+    for row in db.top_jobs(5000):
+        match = _match_from_json(row["match_json"])
+        if match is None:
+            continue
+        deep_match = match.source in {"codex_cli", "openai_api"} and match.evaluation_stage == "deep" and not match.deep_pending
+        if not deep_match or int(match.priority_score or row["priority_score"] or 0) < package_priority:
+            continue
+        if str(row["active_status"] or "").lower() == "expired":
+            continue
+        fp = str(row["fingerprint"])
+        state = db.get_job_state(fp) or {}
+        if str(state.get("user_decision", "") or "").upper() in {"SKIP", "NOT_INTERESTED"}:
+            continue
+        if state.get("has_application"):
+            skipped_existing += 1
+            continue
+        eligible += 1
+        job = Job(
+            source=str(row["source"] or ""), source_id=str(row["source_id"] or ""),
+            title=str(row["title"] or ""), company=str(row["company"] or ""),
+            location=str(row["location"] or ""), url=str(row["url"] or ""),
+            apply_url=str(row["apply_url"] or ""), description=str(row["description"] or ""),
+            published_at=parse_datetime(row["published_at"]), salary_min=row["salary_min"],
+            salary_max=row["salary_max"], currency=str(row["currency"] or "EUR"),
+        )
+        source_cv = select_cv_source(
+            job, cfg, target_language=match.job_language, career_family=match.career_family,
+            employment_type=match.employment_type,
+        )
+        doc_evidence = _document_evidence(job, match, registry, cfg)
+        try:
+            pkg, res = generate_package(job, match, profile, cfg, ai, fp, source_cv, evidence_items=doc_evidence)
+        except Exception as exc:
+            err = {
+                "fingerprint": fp, "title": job.title, "company": job.company,
+                "error_type": type(exc).__name__, "error": str(exc),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+            errors.append(err)
+            ep = Path("output/package_errors") / datetime.now().strftime("%Y-%m-%d") / f"{fp}.json"
+            ep.parent.mkdir(parents=True, exist_ok=True)
+            ep.write_text(json.dumps(err, ensure_ascii=False, indent=2), encoding="utf-8")
+            if match.priority_score >= immediate_priority:
+                if notify("High-priority package generation failed", f"{job.title} at {job.company}. Error record: {ep}", desktop):
+                    notifications_sent += 1
+            continue
+        status = "package_ready" if res.get("ready") else "needs_ai_or_review"
+        db.record_application(fp, str(pkg), status=status)
+        if res.get("ready"):
+            ready.append({"fingerprint": fp, "title": job.title, "company": job.company, "package_dir": str(pkg)})
+            if match.priority_score >= immediate_priority:
+                if notify("High-priority application ready", f"{job.title} at {job.company}. Files: {pkg}", desktop):
+                    notifications_sent += 1
+        else:
+            needs_review.append({"fingerprint": fp, "title": job.title, "company": job.company, "package_dir": str(pkg), "notes": res.get("notes", [])})
+            if match.priority_score >= immediate_priority:
+                if notify("High-priority job needs package review", f"{job.title} at {job.company}. Review: {pkg}", desktop):
+                    notifications_sent += 1
+
+    usage_after = db.usage_stats(); ops_after = db.usage_by_operation()
+    report = {
+        "version": "1.8.2-hotfix1", "mode": "RESUME_PACKAGES_ONLY",
+        "completed_at": datetime.now(timezone.utc).isoformat(), "ai_backend": ai.backend_name(),
+        "eligible_cached_deep_matches": eligible, "skipped_existing_packages": skipped_existing,
+        "packages_ready": len(ready), "packages_needing_review": len(needs_review),
+        "package_generation_errors": len(errors), "notifications_sent": notifications_sent,
+        "usage_this_resume": _usage_delta(usage_before, usage_after),
+        "usage_by_operation_this_resume": _operation_usage_delta(ops_before, ops_after),
+        "ready": ready, "needs_review": needs_review, "errors": errors,
+        "duration_seconds": round(time.perf_counter() - started, 3),
+        "note": "No discovery/job screening/deep job matching was performed; only application documents were generated from cached deep matches.",
+    }
+    rp = Path("output/resume_packages_report.json"); rp.parent.mkdir(parents=True, exist_ok=True)
+    rp.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    return report
+

@@ -262,6 +262,16 @@ def _apply_ashby(job: Job, plain: str, url: str):
         job.metadata["working_model"] = location_type
 
 
+def _clean_ba_title(title: str, company: str = "") -> str:
+    """Canonicalize Bundesagentur result/detail titles after employer enrichment."""
+    value = re.sub(r"^\s*\d+\s*[:.]\s*", "", str(title or ""), flags=re.I).strip()
+    company = re.sub(r"\s+", " ", str(company or "")).strip()
+    if company:
+        cpat = re.escape(company).replace(r"\ ", r"\s+")
+        value = re.sub(rf"\s+bei\s+{cpat}\s*$", "", value, flags=re.I).strip()
+    return re.sub(r"\s+", " ", value).strip()
+
+
 class PageChecker:
     """Live-page verifier/enricher using the V1.6 polite HTTP policy."""
 
@@ -351,6 +361,8 @@ class PageChecker:
             job.url = final_url
         if not job.apply_url:
             job.apply_url = final_url or job.url
+        if job.source == "arbeitsagentur":
+            job.title = _clean_ba_title(job.title, job.company)
         return "active", job
 
 

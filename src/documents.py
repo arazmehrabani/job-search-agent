@@ -39,16 +39,16 @@ def compile_latex(tex_path:Path)->tuple[bool,str]:
     elif shutil.which("pdflatex"):cmd=["pdflatex","-interaction=nonstopmode","-halt-on-error",tex_path.name]
     else:return False,"No LaTeX compiler found. Install MiKTeX/TeX Live with latexmk or pdflatex."
     try:
-        p=subprocess.run(cmd,cwd=work,text=True,capture_output=True,timeout=150)
+        p=subprocess.run(cmd,cwd=work,text=True,encoding="utf-8",errors="replace",capture_output=True,timeout=150)
         if p.returncode!=0:return False,(p.stdout+"\n"+p.stderr)[-6000:]
-        if cmd[0]=="pdflatex":subprocess.run(cmd,cwd=work,text=True,capture_output=True,timeout=150)
+        if cmd[0]=="pdflatex":subprocess.run(cmd,cwd=work,text=True,encoding="utf-8",errors="replace",capture_output=True,timeout=150)
         return tex_path.with_suffix(".pdf").exists(),p.stdout[-3000:]
     except Exception as e:return False,str(e)
 
 def pdf_page_count(pdf_path:Path)->int|None:
     if not pdf_path.exists() or not shutil.which("pdfinfo"):return None
     try:
-        p=subprocess.run(["pdfinfo",str(pdf_path)],text=True,capture_output=True,timeout=30);m=re.search(r"^Pages:\s*(\d+)",p.stdout,re.MULTILINE);return int(m.group(1)) if m else None
+        p=subprocess.run(["pdfinfo",str(pdf_path)],text=True,encoding="utf-8",errors="replace",capture_output=True,timeout=30);m=re.search(r"^Pages:\s*(\d+)",p.stdout,re.MULTILINE);return int(m.group(1)) if m else None
     except Exception:return None
 
 def _copy_assets(assets:Path,pkg:Path):
@@ -79,6 +79,59 @@ def letter_to_tex(letter:str,profile:dict,job:Job,target_language:str)->str:
 \end{document}
 """
 
+
+def _package_layout(outroot: Path, today: str, job: Job, fp: str, lang_tag: str) -> tuple[Path, str]:
+    """Build Windows-safe package directories and short document filenames.
+
+    The package folder already identifies the company/job, so repeating a long company
+    and role in every filename wastes the Windows MAX_PATH budget.  Keep descriptive
+    folders, add an 8-character fingerprint for collision resistance, and progressively
+    shorten the layout when the absolute path would still be too long.
+    """
+    sid = re.sub(r"[^a-fA-F0-9]", "", str(fp or ""))[:8].lower() or "job00000"
+
+    def build(company_len: int, title_len: int, tag_company_len: int, tag_with_company: bool = True):
+        company_slug = safe_slug(job.company or "unknown_company", company_len)
+        title_slug = safe_slug(job.title or "job", title_len)
+        pkg = outroot / today / company_slug / f"{title_slug}_{sid}"
+        if tag_with_company:
+            file_tag = f"{safe_slug(job.company or 'company', tag_company_len)}_{sid}_{lang_tag}"
+        else:
+            file_tag = f"{sid}_{lang_tag}"
+        return pkg, file_tag
+
+    # 220 leaves headroom below classic Windows MAX_PATH for LaTeX side files and
+    # temporary compiler paths.  pathlib.resolve(strict=False) works before creation.
+    layouts = [
+        (28, 42, 18, True),
+        (18, 26, 0, False),
+    ]
+    for args in layouts:
+        pkg, file_tag = build(*args)
+        longest = pkg / f"CoverLetter_{file_tag}.tex"
+        try:
+            plen = len(str(longest.resolve(strict=False)))
+        except TypeError:  # Python compatibility fallback
+            plen = len(str(longest.absolute()))
+        if plen <= 220:
+            return pkg, file_tag
+
+    # Extreme fallback: only the stable job fingerprint is used below the date folder.
+    pkg = outroot / today / sid
+    file_tag = f"{sid}_{lang_tag}"
+    longest = pkg / f"CoverLetter_{file_tag}.tex"
+    try:
+        plen = len(str(longest.resolve(strict=False)))
+    except TypeError:
+        plen = len(str(longest.absolute()))
+    if plen > 245:
+        raise OSError(
+            "Application output path is still too long for reliable Windows/LaTeX use. "
+            "Move the project closer to the drive root or configure documents.output_dir "
+            "to a shorter path (for example C:/JobAgentOutput)."
+        )
+    return pkg, file_tag
+
 def _language_tailoring_ok(tex:str,target_language:str,employment_type:str)->tuple[bool,str]:
     low=tex.lower()
     if target_language=="de":
@@ -88,8 +141,9 @@ def _language_tailoring_ok(tex:str,target_language:str,employment_type:str)->tup
     return True,"ok"
 
 def generate_package(job:Job,match:MatchResult,profile:dict,cfg:dict,ai:AIEngine,fp:str,source_cv:CVSource|None,evidence_items:list[dict]|None=None)->tuple[Path,dict]:
-    dcfg=cfg.get("documents",{});evidence_items=evidence_items or [];assets=Path(dcfg.get("assets_dir","input/assets"));outroot=Path(dcfg.get("output_dir","output/applications"));today=datetime.now().strftime("%Y-%m-%d");pkg=outroot/today/safe_slug(job.company or "unknown_company")/safe_slug(job.title or fp);pkg.mkdir(parents=True,exist_ok=True)
-    target_language=match.job_language if match.job_language in ("de","en") else "en";lang_tag=target_language.upper();file_tag=f"{safe_slug(job.company or 'company',35)}_{safe_slug(job.title or 'job',45)}_{lang_tag}"
+    dcfg=cfg.get("documents",{});evidence_items=evidence_items or [];assets=Path(dcfg.get("assets_dir","input/assets"));outroot=Path(dcfg.get("output_dir","output/applications"));today=datetime.now().strftime("%Y-%m-%d")
+    target_language=match.job_language if match.job_language in ("de","en") else "en";lang_tag=target_language.upper()
+    pkg,file_tag=_package_layout(outroot,today,job,fp,lang_tag);pkg.mkdir(parents=True,exist_ok=True)
     (pkg/"job.json").write_text(json.dumps(job.to_dict(),ensure_ascii=False,indent=2),encoding="utf-8");(pkg/"match.json").write_text(json.dumps(match.to_dict(),ensure_ascii=False,indent=2),encoding="utf-8");(pkg/"job_description.txt").write_text(job.description or "",encoding="utf-8")
     result={"ready":False,"cv_pdf":False,"cover_pdf":False,"cv_pages":None,"target_language":target_language,"employment_type":match.employment_type,"career_family":match.career_family,"source_cv":source_cv.key if source_cv else "","ai_backend":ai.backend_name(),"notes":[],"cv_evidence_ids":[],"cover_letter_evidence_ids":[]};_copy_assets(assets,pkg)
     if source_cv is None or not source_cv.exists:

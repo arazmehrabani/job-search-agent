@@ -1,6 +1,52 @@
-# Job Search Agent V1.8.1
+# Job Search Agent V1.8.2
 
-V1.8.1 is the **freshness / priority correction** release built on the V1.8 relevance gate. It keeps the strict local rejection of unrelated software/business jobs while fixing the remaining issues found in the first real V1.8 output review.
+V1.8.2 is the **execution-clarity / AI-budget allocation** correction release. It preserves the V1.8 relevance gate, V1.8.1 freshness policy, evidence traceability, robots checking, page caching and the polite **1.5 s + jitter per-host request throttle**.
+
+## V1.8.2 — what changed
+
+- Makes the two run modes explicit:
+  - `MATCH_ONLY` (`dry_run=True`) searches and evaluates jobs but **never writes CV/cover-letter packages and never sends desktop notifications**.
+  - `FULL_APPLICATION_PREP` (`dry_run=False`) searches/evaluates and then generates eligible CV + cover-letter packages; it still **never auto-submits applications**.
+- A match-only run now reports `packages_would_generate` plus the actual candidate titles that would receive documents in full mode.
+- Adds convenient VS Code helpers: `match_only()` and `prepare_applications()` so a boolean flag is no longer the main user interface.
+- Changes scarce deep-AI allocation from "first promoted jobs consume the budget" to **screen everyone first, globally rank promoted jobs, then spend the deep budget on the strongest candidates**.
+- PRE/SCREEN-only rows can no longer become final `HIGH/APPLY`; they are capped at `REVIEW` until a deep AI assessment is completed.
+- Screen-promoted jobs that miss the deep budget are marked `deep_pending` and compete for a deep slot on the next run **without paying for the same screen again**.
+- Keeps semantic evidence selection for deep matches, but now makes the operation mix transparent in `last_run_report.json`.
+- Clarifies telemetry: Codex token counts are **local text-length estimates**, not official ChatGPT/Codex account usage or billing data.
+- Adds per-stage runtime telemetry and HTTP telemetry (page fetches, cache hits, network requests, robots requests, retries, errors, and throttle sleep time).
+- Keeps the anti-hammering per-host request throttle. V1.8.2 saves some requests safely by applying the domain gate to source-supplied full descriptions before fetching the public detail page.
+- Extends page cache lifetime from 2 h to 6 h so frequent watch cycles do not refetch unchanged pages unnecessarily.
+- Finishes Bundesagentur title cleanup after employer enrichment, removing duplicated trailing `bei <company>` text.
+- Locally rejects obvious `Customer Support Engineer` SaaS/support roles and commercial `Tender/Bid/Proposal Manager` roles before Codex.
+- Makes high-priority notifications useful even when a generated package fails the READY audit: the notification says the package needs review rather than silently doing nothing.
+- Hardens LaTeX/PDF compiler subprocess decoding with UTF-8 + replacement handling, including German CVs.
+
+### Which mode should I use?
+
+For a diagnostic comparison only:
+
+```python
+result = match_only()
+```
+
+This can still use Codex for job matching, but intentionally creates **no application files**.
+
+For the original agent workflow — search, evaluate, generate documents and notify you:
+
+```python
+result = prepare_applications()
+```
+
+Eligible packages are written below:
+
+```text
+output/applications/YYYY-MM-DD/<company>/<role>/
+```
+
+A generated package can contain both `.tex` and `.pdf` CV/cover-letter files plus evidence traces and the semantic audit. Applications remain human-controlled and are never submitted automatically.
+
+See `CHANGELOG_V1_8_2.md` for the complete correction list.
 
 ## V1.8.1 — corrections after real-output review
 
@@ -111,7 +157,7 @@ This means an irrelevant backend job can remain in SQLite for transparency witho
 
 ### Recommended migration from V1.7.x
 
-Use V1.8.1 in a **new folder with a fresh `output/` database** for the cleanest first comparison. V1.8.1 will also clear stale scores when a rediscovered job becomes hard-filtered, so an old `PRE 46` backend row cannot remain actionable. Copy your personal local inputs/settings only if needed.
+Use V1.8.2 in a **new folder with a fresh `output/` database** for the cleanest first comparison. V1.8.2 will also clear stale scores when a rediscovered job becomes hard-filtered, so an old `PRE 46` backend row cannot remain actionable. Copy your personal local inputs/settings only if needed.
 
 ## Historical: V1.7.1 — automatic job discovery
 
@@ -438,11 +484,11 @@ vscode_runner.py
 Then use:
 
 ```python
-# test search/matching only
-result = run_once(dry_run=True)
+# diagnostic search/matching only — no application files
+result = match_only()
 
-# generate eligible application packages
-result = run_once(dry_run=False)
+# original workflow: generate eligible CV/cover-letter packages + notifications
+result = prepare_applications()
 
 # continuous mode
 watch(interval_minutes=30, dry_run=False)

@@ -1,10 +1,13 @@
+def notify(title: str, message: str, enabled: bool=True) -> bool:
+    """Send a desktop notification and report whether it was actually delivered.
 
-def notify(title: str, message: str, enabled: bool=True):
-    print(f"\n[{title}] {message}\n")
+    Notification failures must never break the job-search pipeline.
+    """
     if not enabled:
-        return
+        return False
     try:
         from plyer import notification
-        notification.notify(title=title,message=message,timeout=10)
+        notification.notify(title=title, message=message, timeout=10)
+        return True
     except Exception:
-        pass
+        return False

@@ -1,55 +1,40 @@
-# Job Search Agent V1.8.1 — Validation Report
+# Job Search Agent V1.8.2 — Validation Report
 
-## Automated test suite
-
-Command:
+## Automated tests
 
 ```text
-python -m unittest discover -s tests -v
+71 passed
 ```
 
-Result: **65 / 65 tests passed**.
+The suite includes all prior V1.3–V1.8.1 regression coverage plus V1.8.2 tests for:
 
-The suite includes all prior parser, deduplication, employment/language, CV selection, feedback learning, telemetry, HTTP throttling/robots/cache, semantic evidence audit, source discovery, Windows/Codex UTF-8, and V1.8 relevance-gate regressions.
+- globally ranked deep-AI budget allocation;
+- `deep_pending` carry-over to the next cycle without repeating the screen;
+- MATCH_ONLY reporting eligible would-generate packages while writing no application files;
+- FULL_APPLICATION_PREP invoking package generation and high-priority notification paths;
+- local Customer Support Engineer / Tender Manager rejection;
+- post-enrichment Bundesagentur `bei <company>` title cleanup.
 
-### V1.8.1 regressions added
+## Source CV compilation
 
-- 8-14 day vacancies remain fully eligible.
-- 15-30 day vacancies survive the cheap filter for live-page confirmation.
-- 31-45 day automatic vacancies require a strong target title.
-- `DE` and city-only German locations do not receive a false location penalty.
-- Explicit foreign-country locations still receive the light location penalty.
-- BA titles remove search-result ranks and duplicated `bei <company>` suffixes.
-- Software/frontend product-design titles are rejected locally.
-- Dashboard shows contextual German importance clearly.
-- AI-rejected audit rows retain detailed reasoning.
-- Per-run AI call/token telemetry is rendered from `last_run_report.json`.
-
-## Python compilation
+Validated with the installed LaTeX toolchain:
 
 ```text
-python -m compileall -q .
+mechanical_en_master.tex   OK  2 pages
+mechanical_de_master.tex   OK  2 pages
+wind_en_master.tex         OK  2 pages
+wind_de_master.tex         OK  2 pages
+wind_thesis_en_master.tex  OK  2 pages
 ```
 
-Result: **passed**.
+Compiler output decoding is now explicit UTF-8 with replacement handling, avoiding false failures on German TeX output.
 
-## Base CV compilation
+## Safety / workflow checks
 
-All sanitized master CV templates compile successfully with pdfLaTeX:
-
-- `mechanical_de_master.tex` → 2 pages
-- `mechanical_en_master.tex` → 2 pages
-- `wind_de_master.tex` → 2 pages
-- `wind_en_master.tex` → 2 pages
-- `wind_thesis_en_master.tex` → 2 pages
-
-## Recommended first validation run
-
-Use `run_once(dry_run=True)` and review:
-
-- `output/dashboard.html`
-- `output/discovery_report.json`
-- `output/search_plan.json`
-- `output/last_run_report.json`
-
-The most important expected change from V1.8 is that relevant 8-30 day jobs are no longer thrown away solely because they are older than seven days, while obvious unrelated roles still die before detail-page/Codex work.
+- `MATCH_ONLY` never invokes `generate_package()` and never sends a desktop notification.
+- `FULL_APPLICATION_PREP` generates only for completed deep matches above the configured package-priority threshold.
+- PRE/SCREEN-only matches are prevented from final `HIGH/APPLY` status.
+- Application auto-submission remains disabled.
+- The 1.5 s + jitter per-host throttle, robots policy, retries and page cache remain enabled.
+- Semantic claim-vs-evidence audit remains required for READY status.
+- Source CVs are never overwritten.
