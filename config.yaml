@@ -62,7 +62,7 @@ http:
   retry_backoff_seconds: 2.0
   max_retry_after_seconds: 60
   timeout_seconds: 20
-  page_cache_minutes: 120
+  page_cache_minutes: 360
   cache_file: output/http_cache.json
   respect_robots_txt: true
   robots_fail_open: true
@@ -147,7 +147,7 @@ sources:
     delay_jitter_seconds: 0.25
     respect_robots_txt: true
     robots_fail_open: true
-    user_agent: JobSearchAgent/1.8.1
+    user_agent: JobSearchAgent/1.8.3
     results_per_query: 8
   arbeitnow:
     enabled: true
@@ -188,6 +188,14 @@ documents:
   compile_pdf: true
   keep_tex: true
   max_cv_pages: 2
+  cover_letter_templates:
+    de: input/templates/cover_letter_de.tex
+    en: input/templates/cover_letter_en.tex
+  cover_letter_style:
+    preferred_min_words: 400
+    preferred_max_words: 560
+    recipient_default_de: Recruiting / Personalabteilung
+    recipient_default_en: Recruiting Team
   cv_sources:
     mechanical_en:
       path: input/cvs/mechanical_en_master.tex

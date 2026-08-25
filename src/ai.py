@@ -69,6 +69,7 @@ class AIEngine:
         self.last_tailor_trace: dict = {}
         self.last_cover_evidence_ids: list[str] = []
         self.last_cover_trace: list[dict] = []
+        self.last_cover_metadata: dict = {}
 
         api_available = bool(os.getenv("OPENAI_API_KEY"))
         codex_available = bool(self.codex_executable)
@@ -296,8 +297,56 @@ Do not infer a stronger fact than an evidence claim states. Return {"evidence_id
         except Exception:
             return lexical_ids[:limit]
 
+    def repair_claim_trace(self, claims: list[dict], evidence_records: list[dict]) -> list[dict]:
+        """Repair missing or mismatched evidence IDs without strengthening the claim.
+
+        The model may only map a claim to VERIFIED evidence IDs.  If no supplied
+        evidence directly supports the claim, it must leave the ID list empty.
+        """
+        valid = {str(e.get("id")): e for e in evidence_records if e.get("id")}
+        clean = []
+        for item in claims or []:
+            if not isinstance(item, dict):
+                continue
+            claim = str(item.get("claim", "")).strip()
+            if not claim:
+                continue
+            clean.append({
+                "document": str(item.get("document", "")),
+                "claim": claim,
+                "current_evidence_ids": [str(x) for x in (item.get("evidence_ids", []) or []) if str(x) in valid],
+            })
+        if not clean or not self.enabled:
+            return [{"document": x["document"], "claim": x["claim"], "evidence_ids": x["current_evidence_ids"]} for x in clean]
+        instructions = """You repair evidence trace metadata for job-application claims. Return JSON only.
+For every supplied claim, choose ONLY IDs from verified_evidence_catalog that directly support the wording and strength of the claim.
+You may replace a wrong current ID. You may add an omitted direct ID. Do not rewrite or strengthen the claim. Do not infer facts.
+If no supplied verified evidence directly supports a claim, return an empty evidence_ids list for that claim.
+Return {"claims":[{"document":"cv|cover_letter","claim":"exact original claim","evidence_ids":["ID"]}]} in the same order."""
+        payload = {"claims": clean, "verified_evidence_catalog": evidence_payload(evidence_records)}
+        try:
+            data = extract_json(self._text_call(instructions, payload, operation="claim_trace_repair"))
+            rows = data.get("claims", []) or []
+            out = []
+            for i, original in enumerate(clean):
+                row = rows[i] if i < len(rows) and isinstance(rows[i], dict) else {}
+                ids = []
+                for x in row.get("evidence_ids", []) or []:
+                    x = str(x)
+                    if x in valid and x not in ids:
+                        ids.append(x)
+                out.append({"document": original["document"], "claim": original["claim"], "evidence_ids": ids})
+            return out
+        except Exception:
+            return [{"document": x["document"], "claim": x["claim"], "evidence_ids": x["current_evidence_ids"]} for x in clean]
+
     def audit_claims(self, claims: list[dict], evidence_records: list[dict]) -> dict:
-        """Semantically verify generated claims against their cited evidence objects."""
+        """Audit claim truth and trace quality in one semantic pass.
+
+        A claim can be factually supported even when its attached evidence IDs are
+        missing or wrong.  In that case the auditor returns recommended evidence IDs
+        so Python can repair metadata without rewriting truthful document text.
+        """
         if not claims:
             return {"ok": False, "audited": 0, "unsupported": [], "reason": "No material claim trace was supplied."}
         valid = {str(e.get("id")): e for e in evidence_records if e.get("id")}
@@ -308,41 +357,117 @@ Do not infer a stronger fact than an evidence claim states. Return {"evidence_id
             claim = str(item.get("claim", "")).strip()
             ids = [str(x) for x in (item.get("evidence_ids", []) or []) if str(x) in valid]
             if claim:
-                clean_claims.append({"claim": claim, "evidence_ids": ids})
+                clean_claims.append({"document": str(item.get("document", "")), "claim": claim, "evidence_ids": ids})
         if not self.enabled:
             return {"ok": False, "audited": len(clean_claims), "unsupported": [], "reason": "AI backend unavailable for semantic evidence audit."}
-        instructions = """You are an evidence-entailment auditor for application documents. Return JSON only.
-For each generated claim, decide whether the cited VERIFIED EVIDENCE directly supports the wording and strength.
-Be strict about responsibility verbs and scope: 'assisted/supported' does NOT justify 'led/owned/managed'; separate facts do NOT justify invented coupling; academic work is not professional experience unless stated.
-A claim may be paraphrased, but it must not add responsibility, scale, outcome, causality, seniority, chronology, tool integration, or proficiency not supported by the cited evidence.
-Return {"results":[{"claim":"...","supported":true|false,"severity":"none|minor|major","reason":"...","suggested_revision":"..."}],"overall_ok":true|false}.
-Any unsupported major claim makes overall_ok false."""
+        instructions = """You are a strict evidence-entailment and trace auditor for job-application documents. Return JSON only.
+For each generated claim, inspect BOTH its currently cited evidence IDs and the complete VERIFIED EVIDENCE CATALOG.
+First decide whether the factual wording and strength are directly supported by any supplied verified evidence. Then decide whether the current evidence_ids correctly trace that support.
+Do not infer stronger responsibility, scale, causality, seniority, chronology, tool integration, domain experience or proficiency than the evidence states.
+Classify each claim as exactly one of:
+SUPPORTED = content is supported and current trace is adequate.
+TRACE_MISSING = content is supported by verified evidence, but evidence_ids are empty/incomplete.
+TRACE_MISMATCH = content is supported by verified evidence, but the current IDs are wrong for that claim.
+MINOR_OVERSTATEMENT = content is mostly supported but wording should be softened.
+UNSUPPORTED_CONTENT = no supplied verified evidence directly supports the material claim.
+For TRACE_MISSING/TRACE_MISMATCH, provide recommended_evidence_ids from the catalog. For SUPPORTED, also provide the best direct IDs. For overstatement/unsupported, provide a truthful suggested_revision when possible.
+Echo document and exact claim. Return {"results":[{"document":"cv|cover_letter","claim":"...","category":"SUPPORTED|TRACE_MISSING|TRACE_MISMATCH|MINOR_OVERSTATEMENT|UNSUPPORTED_CONTENT","supported":true|false,"severity":"none|minor|major","recommended_evidence_ids":["ID"],"reason":"...","suggested_revision":"..."}],"overall_ok":true|false}.
+overall_ok may be true when the only issues are TRACE_MISSING or TRACE_MISMATCH because metadata can be repaired without changing truthful content. It must be false for MINOR_OVERSTATEMENT or UNSUPPORTED_CONTENT."""
+        payload = {"claims": clean_claims, "verified_evidence_catalog": evidence_payload(evidence_records)}
+        try:
+            data = extract_json(self._text_call(instructions, payload, operation="claim_evidence_audit"))
+            results=[];content_issues=[];trace_repairs=[]
+            by_claim={(x["document"],x["claim"]):x for x in clean_claims}
+            allowed={"SUPPORTED","TRACE_MISSING","TRACE_MISMATCH","MINOR_OVERSTATEMENT","UNSUPPORTED_CONTENT"}
+            for item in data.get("results",[]) or []:
+                if not isinstance(item,dict):continue
+                doc=str(item.get("document", ""));claim=str(item.get("claim", ""))
+                original=by_claim.get((doc,claim)) or next((x for x in clean_claims if x["claim"]==claim),{})
+                category=str(item.get("category","UNSUPPORTED_CONTENT")).upper()
+                if category not in allowed:category="UNSUPPORTED_CONTENT"
+                rec=[]
+                for x in item.get("recommended_evidence_ids",[]) or []:
+                    x=str(x)
+                    if x in valid and x not in rec:rec.append(x)
+                supported=category in {"SUPPORTED","TRACE_MISSING","TRACE_MISMATCH"}
+                severity="none" if supported else ("minor" if category=="MINOR_OVERSTATEMENT" else "major")
+                row={"document":doc or str(original.get("document","")),"claim":claim,"evidence_ids":list(original.get("evidence_ids",[])),
+                     "recommended_evidence_ids":rec,"supported":supported,"severity":severity,"category":category,
+                     "reason":str(item.get("reason","")),"suggested_revision":str(item.get("suggested_revision",""))}
+                results.append(row)
+                if category in {"TRACE_MISSING","TRACE_MISMATCH"}:trace_repairs.append(row)
+                elif category in {"MINOR_OVERSTATEMENT","UNSUPPORTED_CONTENT"}:content_issues.append(row)
+            overall=not content_issues
+            return {"ok":overall,"audited":len(results),"results":results,"unsupported":content_issues,"trace_repairs":trace_repairs}
+        except Exception as exc:
+            return {"ok":False,"audited":0,"unsupported":[],"trace_repairs":[],"reason":f"Semantic evidence audit failed: {exc}"}
+
+    def repair_cv_document(self, current_tex: str, job: Job, target_language: str, findings: list[dict], evidence_records: list[dict]) -> tuple[str, dict]:
+        """One bounded correction pass for claims that remain unsupported after trace repair."""
+        if not self.enabled or not findings:
+            return current_tex, {}
+        instructions = """Correct ONLY the flagged unsupported/overstated factual claims in this LaTeX CV. Return JSON only with keys latex, evidence_ids_used, claim_trace.
+Preserve the LaTeX design, section order, protected identity tokens/placeholders and all unflagged content. Do not invent experience.
+For each flagged claim, either soften/rewrite it to exactly match supplied verified evidence, or remove it if no evidence supports it.
+claim_trace must describe every claim you changed in this repair pass and cite direct verified evidence IDs. Keep the CV concise and compilable."""
         payload = {
-            "claims": clean_claims,
+            "job": {"title": job.title, "company": job.company, "description": (job.description or "")[:8000]},
+            "target_language": target_language,
+            "current_latex": current_tex,
+            "flagged_findings": findings,
             "verified_evidence": evidence_payload(evidence_records),
         }
         try:
-            data = extract_json(self._text_call(instructions, payload, operation="claim_evidence_audit"))
-            results = []
-            unsupported = []
-            for item in data.get("results", []) or []:
+            data = extract_json(self._text_call(instructions, payload, operation="cv_claim_repair"))
+            tex = str(data.get("latex", "") or current_tex)
+            valid = {str(e.get("id")) for e in evidence_records if e.get("id")}
+            trace = []
+            used = []
+            for item in data.get("claim_trace", []) or []:
                 if not isinstance(item, dict):
                     continue
-                row = {
-                    "claim": str(item.get("claim", "")),
-                    "supported": bool(item.get("supported", False)),
-                    "severity": str(item.get("severity", "major" if not item.get("supported") else "none")).lower(),
-                    "reason": str(item.get("reason", "")),
-                    "suggested_revision": str(item.get("suggested_revision", "")),
-                }
-                results.append(row)
-                if not row["supported"]:
-                    unsupported.append(row)
-            major = [x for x in unsupported if x.get("severity") == "major"]
-            overall = bool(data.get("overall_ok", not major)) and not major
-            return {"ok": overall, "audited": len(results), "results": results, "unsupported": unsupported}
-        except Exception as exc:
-            return {"ok": False, "audited": 0, "unsupported": [], "reason": f"Semantic evidence audit failed: {exc}"}
+                claim = str(item.get("claim", "")).strip()
+                ids = [str(x) for x in (item.get("evidence_ids", []) or []) if str(x) in valid]
+                if claim:
+                    trace.append({"claim": claim, "evidence_ids": ids})
+                    for x in ids:
+                        if x not in used:
+                            used.append(x)
+            return tex, {"evidence_ids_used": used, "claim_trace": trace}
+        except Exception:
+            return current_tex, {}
+
+    def repair_cover_letter_document(self, current_letter: str, job: Job, match: MatchResult, target_language: str, findings: list[dict], evidence_records: list[dict]) -> tuple[str, dict]:
+        if not self.enabled or not findings:
+            return current_letter, {}
+        language_name = "German" if target_language == "de" else "English"
+        instructions = f"""Correct the flagged unsupported/overstated claims in this {language_name} cover letter. Return JSON only with keys letter, evidence_ids_used, claim_trace.
+Preserve the professional structure, motivation and approximately 400-560 word target when evidence supports it. Do not pad.
+Use only VERIFIED EVIDENCE. For every material factual claim in the revised letter, claim_trace must cite direct evidence IDs. If a fact is unsupported, remove or soften it rather than inventing evidence."""
+        payload = {
+            "job": {"title": job.title, "company": job.company, "location": job.location, "description": (job.description or "")[:9000]},
+            "match": match.to_dict(), "current_letter": current_letter,
+            "flagged_findings": findings, "verified_evidence": evidence_payload(evidence_records),
+        }
+        try:
+            data = extract_json(self._text_call(instructions, payload, operation="cover_letter_claim_repair"))
+            letter = str(data.get("letter", "") or current_letter).strip()
+            valid = {str(e.get("id")) for e in evidence_records if e.get("id")}
+            trace = []
+            used = []
+            for item in data.get("claim_trace", []) or []:
+                if not isinstance(item, dict):
+                    continue
+                claim = str(item.get("claim", "")).strip()
+                ids = [str(x) for x in (item.get("evidence_ids", []) or []) if str(x) in valid]
+                if claim:
+                    trace.append({"claim": claim, "evidence_ids": ids})
+                    for x in ids:
+                        if x not in used:
+                            used.append(x)
+            return letter, {"evidence_ids_used": used, "claim_trace": trace}
+        except Exception:
+            return current_letter, {}
 
     def match(
         self,
@@ -594,22 +719,33 @@ Target employment type: {employment_type}. Career family: {career_family_label}.
         self.last_cover_error = ""
         self.last_cover_evidence_ids = []
         self.last_cover_trace = []
+        self.last_cover_metadata = {}
         language_name = "German" if target_language == "de" else "English"
         if not self.enabled:
             self.last_cover_error = "AI/Codex backend unavailable"
             return "[AI/Codex required: tailored cover letter has not been generated.]"
-        instructions = f"""Write a concise professional cover letter in {language_name} for this exact job.
-Return JSON only with keys: letter, evidence_ids_used, claim_trace.
-The letter should be about 180-280 words and ready to send after personal placeholders are restored.
-Use only the supplied VERIFIED EVIDENCE OBJECTS, match analysis and profile. Never invent experience.
-Explain 2-3 concrete evidence-to-requirement links. Do not frame the candidate as only seeking a thesis unless the vacancy is a thesis. For full-time roles write as a full-time application while truthfully retaining current M.Sc. status.
-If German is requested, never claim proficiency above B1/actively learning. If stronger German is required, stay positive but truthful. Avoid generic flattery and keyword stuffing.
-Every material experience claim in the letter must be supported by at least one ID in evidence_ids_used. claim_trace must list each material generated/reworded claim with its supporting evidence_ids."""
+        instructions = f"""Write a tailored professional cover letter in {language_name} for this exact job.
+Return JSON only with keys: letter, recipient, reference, evidence_ids_used, claim_trace.
+STYLE AND STRUCTURE:
+- Follow a substantive one-page engineering cover-letter style, normally about 400-560 words when enough relevant evidence exists. Do not pad to hit a word count.
+- Paragraph 1: why this specific role/company is attractive and the strongest overall fit.
+- Paragraphs 2-3: the most relevant professional engineering examples, concrete systems/tasks/tools/results, explicitly connected to the vacancy.
+- Paragraph 4 when useful: a relevant academic, research, robotics, wind, simulation or prototyping project that strengthens the application; omit it if it would distract.
+- Paragraph 5 when useful: truthfully acknowledge a domain/tool/language gap and explain the transferable engineering foundation and learning direction.
+- Final paragraph: specific contribution and professional closing.
+- Do not merely repeat the CV. Build a reasoned evidence-to-role argument.
+TRUTH BOUNDARY:
+Use only supplied VERIFIED EVIDENCE OBJECTS, match analysis and profile. Never invent or upgrade skills, responsibilities, employers, dates, outcomes, publications, certifications, language levels or domain experience.
+German remains B1/actively learning. If the role asks for stronger German, disclose it positively and truthfully.
+If candidate identity fields are redacted/placeholders, keep REPLACENAME and do not restore or guess personal data.
+Do not frame a professional full-time application as a thesis search simply because the candidate is currently studying.
+For every material factual claim, claim_trace must contain the claim and at least one direct VERIFIED evidence ID. Do not leave evidence_ids empty when direct evidence exists.
+recipient should be a known named contact/team from the job text when supported, otherwise a neutral recruiting label. reference should contain a vacancy/reference ID only when supported by the job text."""
         evidence = evidence_payload(evidence_records or [])
         valid_ids = {str(e.get("id")) for e in evidence_records or [] if e.get("id")}
         payload = {
             "candidate_profile": profile,
-            "job": {"title": job.title, "company": job.company, "location": job.location, "description": (job.description or "")[:10000]},
+            "job": {"title": job.title, "company": job.company, "location": job.location, "description": (job.description or "")[:11000]},
             "match": match.to_dict(),
             "verified_evidence_objects": evidence,
         }
@@ -621,9 +757,7 @@ Every material experience claim in the letter must be supported by at least one 
                 data = {}
             if isinstance(data, dict) and data.get("letter"):
                 letter = str(data.get("letter", "")).strip()
-                self.last_cover_evidence_ids = [
-                    str(x) for x in (data.get("evidence_ids_used", []) or []) if str(x) in valid_ids
-                ]
+                self.last_cover_evidence_ids = [str(x) for x in (data.get("evidence_ids_used", []) or []) if str(x) in valid_ids]
                 trace = []
                 for item in data.get("claim_trace", []) or []:
                     if not isinstance(item, dict):
@@ -633,11 +767,9 @@ Every material experience claim in the letter must be supported by at least one 
                     if claim:
                         trace.append({"claim": claim, "evidence_ids": ids})
                 self.last_cover_trace = trace
+                self.last_cover_metadata = {"recipient": str(data.get("recipient", "")).strip(), "reference": str(data.get("reference", "")).strip()}
                 return letter
-            # Backwards-compatible fallback: text is usable for review but cannot pass
-            # the V1.6 evidence-trace readiness gate.
             return raw
         except Exception as exc:
             self.last_cover_error = str(exc)
             return f"[AI/Codex failed: {language_name} cover letter was not generated.]"
-

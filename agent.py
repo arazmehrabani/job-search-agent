@@ -10,7 +10,7 @@ from pathlib import Path
 
 from src.config import load_config
 from src.db import Database
-from src.pipeline import run_pipeline, build_sources
+from src.pipeline import run_pipeline, build_sources, resume_application_packages
 from src.ai import AIEngine
 from src.dashboard import build_dashboard
 from src.dashboard_server import serve_dashboard
@@ -90,6 +90,9 @@ def doctor(cfg, network: bool = False):
     add("robots.txt policy", bool(hcfg.get("respect_robots_txt", True)), f"fail_open={bool(hcfg.get('robots_fail_open', True))}")
     add("HTTP page cache", float(hcfg.get("page_cache_minutes", 0) or 0) > 0, f"{hcfg.get('page_cache_minutes', 0)} minutes")
     assets = Path(cfg.get("documents", {}).get("assets_dir", "input/assets")); add("Assets directory", assets.exists(), assets)
+    cl_templates = cfg.get("documents", {}).get("cover_letter_templates", {}) or {}
+    tpl_paths = [Path(str(cl_templates.get(k, ""))) for k in ("de", "en")]
+    add("Cover-letter templates", all(x.exists() for x in tpl_paths), ", ".join(str(x) for x in tpl_paths))
 
     output = Path("output"); output.mkdir(exist_ok=True)
     try:
@@ -108,7 +111,7 @@ def doctor(cfg, network: bool = False):
             add("Internet connectivity", r.status_code < 500, f"HTTP {r.status_code}")
         except Exception as exc: add("Internet connectivity", False, exc)
 
-    print("\nJob Search Agent V1.8.1 — doctor\n")
+    print("\nJob Search Agent V1.8.3 — doctor\n")
     for name, ok, note in checks:
         print(f"{'OK ' if ok else '---'} {name:22} {note}")
     optional_names = {"OPENAI_API_KEY", "ADZUNA keys", "JOOBLE_API_KEY", "Git", "pdfinfo", "Codex CLI"}
@@ -117,7 +120,7 @@ def doctor(cfg, network: bool = False):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Personal Job Search Agent V1.8.1")
+    ap = argparse.ArgumentParser(description="Personal Job Search Agent V1.8.3")
     ap.add_argument("--config", default="config.yaml")
     sub = ap.add_subparsers(dest="command", required=True)
     r = sub.add_parser("run", help="Search, verify, rank and prepare application packages")
@@ -128,6 +131,7 @@ def main():
     doc = sub.add_parser("doctor", help="Check configuration and dependencies")
     doc.add_argument("--network", action="store_true", help="Also test internet connectivity")
     sub.add_parser("repair-db", help="Remove old ghost parser rows without application packages")
+    sub.add_parser("repair-packages", help="Regenerate existing needs-review application packages from cached deep matches; no new search/matching")
     f = sub.add_parser("feedback", help="Record your decision for a job")
     f.add_argument("identifier", help="Job fingerprint, exact job URL, or source/requisition ID")
     f.add_argument("decision", choices=["APPLY","SAVE","SKIP","APPLIED","INTERVIEW","REJECTED","OFFER","CLEAR"])
@@ -144,7 +148,7 @@ def main():
     if args.command == "doctor":
         doctor(cfg, network=args.network); return
     if args.command == "sources":
-        print("\nJob Search Agent V1.8.1 — source status\n")
+        print("\nJob Search Agent V1.8.3 — source status\n")
         broad = 0
         live_ok = 0
         for src in build_sources(cfg):
@@ -180,6 +184,10 @@ def main():
             print(build_digest(db, min_priority=minp))
         elif args.command == "repair-db":
             removed = db.repair_legacy_ghosts(); print(f"Removed {removed} legacy ghost row(s)."); print(build_dashboard(db, cfg=cfg))
+        elif args.command == "repair-packages":
+            result = resume_application_packages(cfg, db, repair_existing=True)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            print(build_dashboard(db, cfg=cfg))
         elif args.command == "feedback":
             fp = db.find_fingerprint(args.identifier)
             if not fp: raise SystemExit("Job not found. Use the exact dashboard URL, fingerprint, or source ID.")

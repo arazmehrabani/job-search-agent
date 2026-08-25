@@ -14,6 +14,7 @@ from src.models import Job, MatchResult
 from src.pipeline import run_pipeline
 from src.relevance import title_relevance_gate
 from src.pagecheck import _clean_ba_title
+from src.documents import _package_layout
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -197,7 +198,7 @@ class V182Tests(unittest.TestCase):
                 cfg["evidence"]["registry"] = str(root / "input/evidence/evidence.json")
                 db = Database("output/test.db")
 
-                def fake_generate(job, match, profile, cfg, ai, fp, source_cv, evidence_items=None):
+                def fake_generate(job, match, profile, cfg, ai, fp, source_cv, evidence_items=None, audit_evidence_items=None):
                     pkg = Path("output/applications/fake") / job.source_id
                     pkg.mkdir(parents=True, exist_ok=True)
                     (pkg / "CV_test.tex").write_text("% cv", encoding="utf-8")
@@ -231,6 +232,50 @@ class V182Tests(unittest.TestCase):
             _clean_ba_title("Mechanical Design Engineer (m/w/d) bei Loesche GmbH", "Loesche GmbH"),
             "Mechanical Design Engineer (m/w/d)",
         )
+
+    def test_windows_safe_document_layout_for_long_jobtimum_path(self):
+        with tempfile.TemporaryDirectory() as td:
+            old = Path.cwd()
+            # Simulate a fairly deep Windows-style project location by nesting the temp root.
+            deep = Path(td) / ("job_agent_project_" + "x" * 55) / ("nested_" + "y" * 35)
+            deep.mkdir(parents=True)
+            os.chdir(deep)
+            try:
+                job = Job(
+                    "arbeitsagentur", "x",
+                    "Mechanical Design Engineer (m/w/d) Maritime Systems",
+                    "Jobtimum GmbH Technik & Engineering",
+                    "Bremen, DE", "https://example.com/job",
+                )
+                pkg, tag = _package_layout(Path("output/applications"), "2026-08-14", job, "9838c331aad03974b63131f1", "DE")
+                target = pkg / f"CoverLetter_{tag}.tex"
+                self.assertLessEqual(len(str(target.resolve())), 245)
+                pkg.mkdir(parents=True, exist_ok=True)
+                target.write_text("test", encoding="utf-8")
+                self.assertTrue(target.exists())
+            finally:
+                os.chdir(old)
+
+    def test_package_generation_error_does_not_abort_full_pipeline(self):
+        with tempfile.TemporaryDirectory() as td:
+            old = Path.cwd(); os.chdir(td)
+            try:
+                cfg = self._cfg(); root = PROJECT_ROOT
+                cfg["documents"]["profile"] = str(root / "input/profile.json")
+                cfg["search"]["career_scope_file"] = str(root / "input/career_scope.yaml")
+                cfg["evidence"]["registry"] = str(root / "input/evidence/evidence.json")
+                db = Database("output/test.db")
+                with patch("src.pipeline.build_sources", return_value=[_FakeSource(self._jobs())]), \
+                     patch("src.pipeline.AIEngine", _FakeAI), \
+                     patch("src.pipeline.generate_package", side_effect=FileNotFoundError("simulated long Windows path")), \
+                     patch("src.pipeline.notify", return_value=False):
+                    result = run_pipeline(cfg, db, dry_run=False)
+                self.assertEqual(result["package_generation_errors"], 1)
+                self.assertTrue(Path("output/last_run_report.json").exists())
+                self.assertTrue(any(Path("output/package_errors").rglob("*.json")))
+                db.close()
+            finally:
+                os.chdir(old)
 
 
 if __name__ == "__main__":

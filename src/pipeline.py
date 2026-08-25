@@ -261,7 +261,7 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
     broad_success = [x for x in source_reports if x.get("category") == "broad" and x.get("automatic") and x.get("success")]
     auto_discovery_active = bool(broad_success)
     discovery_report = {
-        "version": "1.8.2-hotfix1",
+        "version": "1.8.3",
         "automatic_discovery_active": auto_discovery_active,
         "planned_queries": len(queries),
         "sources": source_reports,
@@ -644,7 +644,7 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
         if package_eligible and not dry_run:
             doc_evidence = _document_evidence(job, match, registry, cfg)
             try:
-                pkg, res = generate_package(job, match, profile, cfg, ai, fp, source_cv, evidence_items=doc_evidence)
+                pkg, res = generate_package(job, match, profile, cfg, ai, fp, source_cv, evidence_items=doc_evidence, audit_evidence_items=registry)
             except Exception as exc:
                 # A single document/package failure must never abort the entire job-search run.
                 # Persist an actionable error record and continue with the remaining jobs.
@@ -700,7 +700,7 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
     usage_this_run = _usage_delta(usage_before, usage_after)
     usage_ops_this_run = _operation_usage_delta(usage_ops_before, usage_ops_after)
     last_run_report = {
-        "version": "1.8.2-hotfix1",
+        "version": "1.8.3",
         "completed_at": datetime.now(timezone.utc).isoformat(),
         "ai_backend": ai.backend_name(),
         "dry_run": bool(dry_run),
@@ -781,7 +781,7 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
         ], key=lambda x: (x["priority"], x["fit"]), reverse=True)[:15],
     }
 
-def resume_application_packages(cfg: dict, db: Database) -> dict:
+def resume_application_packages(cfg: dict, db: Database, repair_existing: bool = False) -> dict:
     """Generate documents only from already completed deep matches in the database.
 
     This recovery mode performs no discovery, page fetching, screening, semantic
@@ -816,8 +816,10 @@ def resume_application_packages(cfg: dict, db: Database) -> dict:
         if str(state.get("user_decision", "") or "").upper() in {"SKIP", "NOT_INTERESTED"}:
             continue
         if state.get("has_application"):
-            skipped_existing += 1
-            continue
+            app_status = str(state.get("application_status", "") or "")
+            if app_status == "package_ready" or not repair_existing:
+                skipped_existing += 1
+                continue
         eligible += 1
         job = Job(
             source=str(row["source"] or ""), source_id=str(row["source_id"] or ""),
@@ -833,7 +835,7 @@ def resume_application_packages(cfg: dict, db: Database) -> dict:
         )
         doc_evidence = _document_evidence(job, match, registry, cfg)
         try:
-            pkg, res = generate_package(job, match, profile, cfg, ai, fp, source_cv, evidence_items=doc_evidence)
+            pkg, res = generate_package(job, match, profile, cfg, ai, fp, source_cv, evidence_items=doc_evidence, audit_evidence_items=registry)
         except Exception as exc:
             err = {
                 "fingerprint": fp, "title": job.title, "company": job.company,
@@ -862,19 +864,34 @@ def resume_application_packages(cfg: dict, db: Database) -> dict:
                     notifications_sent += 1
 
     usage_after = db.usage_stats(); ops_after = db.usage_by_operation()
+    usage_delta = _usage_delta(usage_before, usage_after)
+    ops_delta = _operation_usage_delta(ops_before, ops_after)
+    duration = round(time.perf_counter() - started, 3)
+    mode = "REPAIR_EXISTING_PACKAGES" if repair_existing else "RESUME_PACKAGES_ONLY"
     report = {
-        "version": "1.8.2-hotfix1", "mode": "RESUME_PACKAGES_ONLY",
+        "version": "1.8.3", "mode": mode,
         "completed_at": datetime.now(timezone.utc).isoformat(), "ai_backend": ai.backend_name(),
         "eligible_cached_deep_matches": eligible, "skipped_existing_packages": skipped_existing,
         "packages_ready": len(ready), "packages_needing_review": len(needs_review),
         "package_generation_errors": len(errors), "notifications_sent": notifications_sent,
-        "usage_this_resume": _usage_delta(usage_before, usage_after),
-        "usage_by_operation_this_resume": _operation_usage_delta(ops_before, ops_after),
+        "usage_this_resume": usage_delta, "usage_by_operation_this_resume": ops_delta,
         "ready": ready, "needs_review": needs_review, "errors": errors,
-        "duration_seconds": round(time.perf_counter() - started, 3),
+        "duration_seconds": duration,
         "note": "No discovery/job screening/deep job matching was performed; only application documents were generated from cached deep matches.",
     }
     rp = Path("output/resume_packages_report.json"); rp.parent.mkdir(parents=True, exist_ok=True)
     rp.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    # Keep the dashboard's single 'last run' view correct after recovery/repair mode.
+    last = {
+        "version": "1.8.3", "completed_at": report["completed_at"], "ai_backend": ai.backend_name(),
+        "execution_mode": mode, "document_generation_enabled": True, "notifications_enabled": True,
+        "usage_this_run": usage_delta, "usage_by_operation_this_run": ops_delta,
+        "packages_ready": len(ready), "packages_needing_ai_or_review": len(needs_review),
+        "packages_would_generate": 0, "package_generation_errors": len(errors),
+        "notifications_sent": notifications_sent,
+        "stage_seconds": {"document_recovery_seconds": duration, "total_seconds": duration},
+        "http": {"page_fetches": 0, "cache_hits": 0, "network_requests": 0, "retries": 0, "errors": 0, "throttle_sleep_seconds": 0.0},
+    }
+    Path("output/last_run_report.json").write_text(json.dumps(last, ensure_ascii=False, indent=2), encoding="utf-8")
     return report
 

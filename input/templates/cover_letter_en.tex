@@ -1,0 +1,37 @@
+\documentclass[10.5pt,a4paper]{article}
+\usepackage[a4paper,top=1.40cm,bottom=1.40cm,left=2.00cm,right=2.00cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[scaled=0.97]{helvet}
+\renewcommand{\familydefault}{\sfdefault}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage[hidelinks]{hyperref}
+\usepackage{ragged2e}
+\usepackage{tabularx}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6.0pt}
+\definecolor{muted}{HTML}{555555}
+\RaggedRight
+\emergencystretch=1em
+\hypersetup{pdftitle={%%PDF_TITLE%%},pdfauthor={%%NAME%%},pdfsubject={%%PDF_SUBJECT%%}}
+\begin{document}
+{\fontsize{19.5}{21.5}\selectfont\bfseries %%NAME%%}\\[3pt]
+{\color{muted}%%SUBTITLE%%}\\[4pt]
+%%LOCATION%% \enspace|\enspace
+\href{tel:%%PHONE_LINK%%}{%%PHONE%%} \enspace|\enspace
+\href{mailto:%%EMAIL%%}{%%EMAIL%%}\\[2pt]
+%%LINKEDIN_LINE%%
+\vspace{6pt}
+\hrule
+\vspace{10pt}
+\begin{tabularx}{\linewidth}{@{}Xr@{}}
+\textbf{%%COMPANY%%} & \textbf{%%DATE%%}\\
+%%RECIPIENT%% & \\
+%%COMPANY_LOCATION%% &
+\end{tabularx}
+\vspace{7pt}
+{\large\bfseries Application for %%JOB_TITLE%%%%REFERENCE_SUFFIX%%}
+\vspace{3pt}
+%%LETTER_BODY%%
+\end{document}

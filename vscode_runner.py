@@ -1,5 +1,5 @@
 # %% [markdown]
-# JOB SEARCH AGENT V1.8.2 HOTFIX 1 — VS CODE / CONDA RUNNER
+# JOB SEARCH AGENT V1.8.3 — VS CODE / CONDA RUNNER
 #
 # Select the Conda interpreter named `agent`, then run cells with Shift+Enter.
 # V1.8.2 adds a domain relevance gate, domain-anchored PRE scoring, relevance-first AI budgeting,
@@ -43,7 +43,7 @@ def run_once(dry_run: bool = False):
     try:
         backend = AIEngine(cfg).backend_name()
         mode = "MATCH_ONLY" if dry_run else "FULL_APPLICATION_PREP"
-        print(f"\n=== Job Agent V1.8.2 Hotfix 1 | AI backend: {backend} | mode={mode} ===")
+        print(f"\n=== Job Agent V1.8.3 | AI backend: {backend} | mode={mode} ===")
         if dry_run:
             print("MATCH_ONLY: discovery + matching will run, but CV/cover-letter generation and desktop notifications are DISABLED.")
         else:
@@ -79,7 +79,7 @@ def resume_packages():
     db = Database(DB_FILE)
     try:
         backend = AIEngine(cfg).backend_name()
-        print(f"\n=== Job Agent V1.8.2 Hotfix 1 | AI backend: {backend} | mode=RESUME_PACKAGES_ONLY ===")
+        print(f"\n=== Job Agent V1.8.3 | AI backend: {backend} | mode=RESUME_PACKAGES_ONLY ===")
         print("RECOVERY: no discovery, page fetching, job screening, or deep job matching will run.")
         print("Only cached completed deep matches are used to create CV/cover-letter packages. Applications are NEVER auto-submitted.")
         result = resume_application_packages(cfg, db)
@@ -93,6 +93,27 @@ def resume_packages():
     finally:
         db.close()
 
+
+
+def repair_packages():
+    """Regenerate cached packages that exist but are still marked needs review; no new search/job matching."""
+    cfg = load_config(CONFIG_FILE)
+    db = Database(DB_FILE)
+    try:
+        backend = AIEngine(cfg).backend_name()
+        print(f"\n=== Job Agent V1.8.3 | AI backend: {backend} | mode=REPAIR_EXISTING_PACKAGES ===")
+        print("REPAIR: no discovery, page fetching, job screening, or deep job matching will run.")
+        print("Existing NEEDS-REVIEW packages are regenerated with the V1.8.3 evidence/template corrections. Applications are NEVER auto-submitted.")
+        result = resume_application_packages(cfg, db, repair_existing=True)
+        dashboard = build_dashboard(db, cfg=cfg)
+        digest = build_digest(db, min_priority=int(cfg.get("notifications", {}).get("digest_priority_min", 68)))
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        print("Dashboard:", Path(dashboard).resolve())
+        print("Review digest:", Path(digest).resolve())
+        print("Repair report:", Path("output/resume_packages_report.json").resolve())
+        return result
+    finally:
+        db.close()
 
 def watch(interval_minutes: float | None = None, dry_run: bool = False):
     cfg = load_config(CONFIG_FILE)
@@ -177,11 +198,15 @@ print("Full plan: output/search_plan.json")
 
 # %% RUN ONCE — Shift+Enter
 # FULL APPLICATION PREP — generates eligible CV/cover-letter packages; never submits
-# result = prepare_applications()
+result = prepare_applications()
 
 # %% RECOVER DOCUMENTS AFTER AN INTERRUPTED FULL RUN — Shift+Enter
 # Uses existing cached deep matches. No new discovery/screening/deep job matching.
-result = resume_packages()
+# result = resume_packages()
+
+# %% REPAIR EXISTING NEEDS-REVIEW PACKAGES — Shift+Enter
+# Rebuilds existing non-ready packages using V1.8.3 templates/evidence repair. No new search/job matching.
+# result = repair_packages()
 
 # %% INTERACTIVE DASHBOARD — Shift+Enter
 # Opens http://127.0.0.1:8765 with APPLY / SAVE / SKIP buttons.

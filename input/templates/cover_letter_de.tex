@@ -1,0 +1,41 @@
+\documentclass[10.5pt,a4paper]{article}
+\usepackage[a4paper,top=1.35cm,bottom=1.35cm,left=1.85cm,right=1.85cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[ngerman]{babel}
+\usepackage[scaled=0.97]{helvet}
+\renewcommand{\familydefault}{\sfdefault}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage[hidelinks]{hyperref}
+\usepackage{ragged2e}
+\usepackage{tabularx}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5.5pt}
+\definecolor{muted}{HTML}{555555}
+\definecolor{rulecolor}{HTML}{777777}
+\RaggedRight
+\hyphenpenalty=500
+\exhyphenpenalty=500
+\emergencystretch=2em
+\hypersetup{pdftitle={%%PDF_TITLE%%},pdfauthor={%%NAME%%},pdfsubject={%%PDF_SUBJECT%%}}
+\begin{document}
+{\fontsize{19.5}{21.5}\selectfont\bfseries %%NAME%%}\\[3pt]
+{\color{muted}%%SUBTITLE%%}\\[4pt]
+%%LOCATION%% \enspace|\enspace
+\href{tel:%%PHONE_LINK%%}{%%PHONE%%} \enspace|\enspace
+\href{mailto:%%EMAIL%%}{%%EMAIL%%}\\[2pt]
+%%LINKEDIN_LINE%%
+\vspace{6pt}
+{\color{rulecolor}\hrule}
+\vspace{10pt}
+\begin{tabularx}{\linewidth}{@{}Xr@{}}
+\textbf{%%COMPANY%%} & \textbf{%%DATE%%}\\
+%%RECIPIENT%% & \\
+%%COMPANY_LOCATION%% &
+\end{tabularx}
+\vspace{7pt}
+{\large\bfseries Bewerbung als %%JOB_TITLE%%%%REFERENCE_SUFFIX%%}
+\vspace{3pt}
+%%LETTER_BODY%%
+\end{document}

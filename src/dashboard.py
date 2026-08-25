@@ -270,10 +270,10 @@ details{{margin-top:6px;color:var(--muted);font-size:10.5px}} summary{{cursor:po
 .decision-current{{font-weight:700;font-size:11px}} .decision-buttons{{display:flex;gap:3px;margin-top:5px;flex-wrap:wrap}} .decision-buttons button{{border:1px solid #d6dbe1;background:#fff;border-radius:5px;padding:3px 5px;font-size:9px;cursor:pointer}} .decision-buttons.disabled button{{opacity:.35;cursor:not-allowed}}
 .audit{{margin-top:14px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:9px 11px}} .audit table{{min-width:1100px;table-layout:auto}} .audit th{{position:static}}
 .empty{{padding:20px;color:var(--muted);text-align:center}} tr:hover td{{background:#fbfcfd}} @media(max-width:900px){{.shell{{padding:13px}}}}
-</style></head><body><div class='shell'><h1>Job Search Agent V1.8.2</h1>
+</style></head><body><div class='shell'><h1>Job Search Agent V1.8.3</h1>
 <p class='note'><b>Main list = jobs worth your attention.</b> PRE/SCREEN rows are triage only; final HIGH/APPLY and automatic application packages require a completed DEEP AI assessment. MATCH_ONLY runs intentionally suppress CV/cover-letter generation and desktop notifications.</p>
 <div class='cards'>
-<div class='card'><b>Run mode</b><div class='n'>{_esc(run_mode)}</div><div class='sub'>{'documents + notifications enabled' if run_mode == 'FULL_APPLICATION_PREP' else 'documents + notifications SUPPRESSED'}</div></div>
+<div class='card'><b>Run mode</b><div class='n'>{_esc(run_mode)}</div><div class='sub'>{'documents + notifications enabled' if run_mode in {'FULL_APPLICATION_PREP','RESUME_PACKAGES_ONLY','REPAIR_EXISTING_PACKAGES'} else 'documents + notifications SUPPRESSED'}</div></div>
 <div class='card'><b>Auto discovery</b><div class='n'>{discovery_text}</div><div class='sub'>{_esc(discovery_note[:58])}</div></div>
 <div class='card'><b>Raw discovered</b><div class='n'>{discovery.get('raw_results',0) or 0}</div></div>
 <div class='card'><b>Title-gate rejects</b><div class='n'>{discovery.get('title_gate_rejected',0) or 0}</div></div>
