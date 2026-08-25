@@ -1,0 +1,231 @@
+search:
+  country: "de"
+
+  # Deliberately broad anchors: search by capability, not only past job titles.
+  always_queries:
+    - "wind energy engineer"
+    - "mechanical engineer"
+    - "CAE engineer"
+    - "FEA engineer"
+    - "simulation engineer"
+    - "development engineer"
+    - "product development engineer"
+    - "renewable energy engineer"
+    - "project engineer renewable energy"
+    - "Berechnungsingenieur"
+    - "Simulationsingenieur"
+    - "Entwicklungsingenieur"
+    - "Konstruktionsingenieur"
+    - "Ingenieur Erneuerbare Energien"
+
+  broader_queries: []
+  career_scope_file: "input/career_scope.yaml"
+  use_career_scope: true
+  include_tiers: [core, adjacent, stretch]
+  auto_from_profile: true
+  auto_from_cv: true
+  broad_search: true
+  max_auto_queries: 18
+  max_queries_per_cycle: 32
+  query_rotation_state: "output/query_rotation.json"
+  search_plan_output: "output/search_plan.json"
+
+  job_languages: [en, de]
+  locations: ["Germany"]
+  max_age_days: 7
+  results_per_source: 25
+  verify_live_page: true
+
+preferences:
+  required_title_keywords: []
+  excluded_title_keywords:
+    - "senior director"
+    - "principal manager"
+    - "head of"
+    - "chief engineer"
+
+  # Full-time roles are primary targets. Student/thesis roles are also allowed.
+  allowed_employment_types:
+    - full_time
+    - part_time
+    - fixed_term
+    - master_thesis
+    - internship
+    - working_student
+    - unknown
+
+  preferred_keywords:
+    - ansys
+    - abaqus
+    - fea
+    - fem
+    - cae
+    - structural
+    - vibration
+    - dynamics
+    - simulation
+    - mechanical
+    - product development
+    - wind
+    - renewable
+    - python
+    - matlab
+    - simulink
+    - solidworks
+    - catia
+    - development
+    - design
+    - manufacturing
+    - automation
+    - project engineer
+  preferred_locations: [germany, remote]
+
+  minimum_match_score: 63
+  package_generation_score: 77
+  do_not_penalize_title_mismatch_alone: true
+
+  # German vacancies remain searchable with B1. Stronger explicit requirements are
+  # reported as risks rather than hard-filtered automatically.
+  german_language_policy:
+    current_level: "B1"
+    do_not_hard_filter_language_mismatch: true
+    flag_b2_or_higher: true
+
+ai:
+  enabled: true
+  provider: "auto"
+  model: "${OPENAI_MODEL:-gpt-5.6}"
+  codex_model: ""
+  timeout_seconds: 300
+  precheck_min_score: 15
+  max_jobs_per_run: 24
+
+sources:
+  adzuna:
+    enabled: true
+  jooble:
+    enabled: true
+  greenhouse:
+    enabled: true
+    boards: []
+  lever:
+    enabled: true
+    sites: []
+  smartrecruiters:
+    enabled: true
+    companies: []
+  manual_links:
+    enabled: true
+    file: "input/manual_jobs.txt"
+  email_alert_files:
+    enabled: true
+    directory: "input/job_alerts"
+
+documents:
+  profile: "input/profile.json"
+  assets_dir: "input/assets"
+  output_dir: "output/applications"
+  compile_pdf: true
+  keep_tex: true
+  max_cv_pages: 2
+
+  # V1.3: these are BOTH base-layout candidates and a shared evidence library.
+  # The selector prefers the vacancy language and career family. Tailoring may use
+  # verified facts from every source below, not just the selected base CV.
+  cv_sources:
+    mechanical_en:
+      path: "input/cvs/mechanical_en_master.tex"
+      source_language: "en"
+      role: "base"
+      priority: 20
+      career_families:
+        - cae_structural_dynamics
+        - mechanical_product_development
+        - manufacturing_project_engineering
+        - simulation_computational_engineering
+        - cae_application_consulting
+        - controls_robotics_mechatronics
+        - systems_research_engineering
+        - test_validation_engineering
+        - reliability_dynamics_engineering
+      focus_keywords: [mechanical, machinery, cae, fea, fem, ansys, structural, vibration, design, development, solidworks, catia, manufacturing]
+
+    mechanical_de:
+      path: "input/cvs/mechanical_de_master.tex"
+      source_language: "de"
+      role: "base"
+      priority: 20
+      career_families:
+        - cae_structural_dynamics
+        - mechanical_product_development
+        - manufacturing_project_engineering
+        - simulation_computational_engineering
+        - cae_application_consulting
+        - controls_robotics_mechatronics
+        - systems_research_engineering
+        - test_validation_engineering
+        - reliability_dynamics_engineering
+      focus_keywords: [maschinenbau, maschine, cae, fem, ansys, strukturdynamik, schwingung, konstruktion, entwicklung, fertigung]
+
+    wind_en:
+      path: "input/cvs/wind_en_master.tex"
+      source_language: "en"
+      role: "base"
+      priority: 22
+      career_families:
+        - wind_loads_structures
+        - renewable_energy_projects
+        - wind_planning_assessment
+        - simulation_computational_engineering
+        - systems_research_engineering
+      focus_keywords: [wind, wind turbine, offshore, renewable, openfast, windpro, qgis, structural loads, aeroelastic, energy]
+
+    wind_de:
+      path: "input/cvs/wind_de_master.tex"
+      source_language: "de"
+      role: "base"
+      priority: 22
+      career_families:
+        - wind_loads_structures
+        - renewable_energy_projects
+        - wind_planning_assessment
+        - simulation_computational_engineering
+        - systems_research_engineering
+      focus_keywords: [wind, windenergie, windenergieanlage, offshore, openfast, windpro, qgis, lasten, aeroelastisch, erneuerbare]
+
+    # The compact Fraunhofer CV is kept as a specialist thesis layout/evidence source.
+    wind_thesis_en:
+      path: "input/cvs/wind_thesis_en_master.tex"
+      source_language: "en"
+      role: "specialist"
+      priority: 35
+      employment_types: [master_thesis]
+      career_families: [wind_loads_structures, cae_structural_dynamics]
+      focus_keywords: [fraunhofer, thesis, master thesis, wind, structural, openfast, ansys]
+
+  master_cv: "input/cvs/mechanical_en_master.tex"
+
+  # Identity is intentionally placeholders-only. Your separate program can restore
+  # the real personal data later. The AI is forbidden to modify these placeholders.
+  preserve_identity_and_links_exactly: true
+  personal_fields_are_placeholders: true
+  evidence_library_mode: true
+  concise_tailoring: true
+
+  language_policy:
+    german_job: "de"
+    english_job: "en"
+    mixed_or_unknown: "en"
+    force_cv_and_cover_same_as_job: true
+
+notifications:
+  desktop: true
+
+safety:
+  never_invent_experience: true
+  never_overwrite_source_cvs: true
+  preserve_redacted_personal_data: true
+  auto_submit_applications: false
+
+automation:
+  watch_interval_minutes: 30

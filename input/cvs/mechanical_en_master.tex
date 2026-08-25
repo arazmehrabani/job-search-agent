@@ -1,0 +1,184 @@
+\documentclass[10pt,a4paper]{article}
+
+% ---------- Page and font setup ----------
+\usepackage[a4paper,top=1.20cm,bottom=1.20cm,left=1.55cm,right=1.55cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[scaled=0.96]{helvet}
+\renewcommand{\familydefault}{\sfdefault}
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{tabularx}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage[hidelinks]{hyperref}
+\usepackage{ragged2e}
+\usepackage{fancyhdr}
+\usepackage{lastpage}
+
+% ---------- PDF metadata ----------
+\hypersetup{
+  pdftitle={REPLACENAME - Mechanical Engineering CV},
+  pdfauthor={REPLACENAME},
+  pdfsubject={Mechanical engineering, product development, CAE and structural dynamics}
+}
+
+% ---------- Style ----------
+\definecolor{heading}{HTML}{202020}
+\definecolor{muted}{HTML}{555555}
+\definecolor{rulecolor}{HTML}{777777}
+
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+\fancyfoot[L]{\scriptsize\color{muted}REPLACENAME}
+\fancyfoot[R]{\scriptsize\color{muted}\thepage/\pageref{LastPage}}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0pt}
+\setlist[itemize]{leftmargin=1.18em,itemsep=2.0pt,topsep=2.5pt,parsep=0pt,partopsep=0pt}
+\urlstyle{same}
+\RaggedRight
+
+\titleformat{\section}
+  {\large\bfseries\color{heading}}
+  {}{0pt}{}
+  [\vspace{-0.22em}\color{rulecolor}\titlerule]
+\titlespacing*{\section}{0pt}{0.55em}{0.30em}
+
+% Full-width entries: content at left, date or descriptor at right.
+\newcommand{\cvjob}[4]{%
+  \begin{tabularx}{\linewidth}{@{}Xr@{}}
+    \textbf{#1} & \textbf{#2}\\[-1pt]
+    \textit{#3} & \textit{#4}
+  \end{tabularx}
+  \vspace{0.05em}
+}
+
+\newcommand{\cvproject}[2]{%
+  \begin{tabularx}{\linewidth}{@{}Xr@{}}
+    \textbf{#1} & \textbf{#2}
+  \end{tabularx}
+  \vspace{0.05em}
+}
+
+\newcommand{\cvedu}[4]{%
+  \begin{tabularx}{\linewidth}{@{}Xr@{}}
+    \textbf{#1} & \textbf{#2}\\[1pt]
+    \textit{#3} & \textit{#4}
+  \end{tabularx}
+  \vspace{0.03em}
+}
+\hyphenation{SOLIDWORKS OpenFAST}
+\emergencystretch=1em
+\renewcommand{\arraystretch}{1.08}
+\begin{document}
+\fontsize{11.25}{12.75}\selectfont
+
+% ---------- Header ----------
+\begin{minipage}[t]{0.79\linewidth}
+  \vspace{0pt}
+  {\fontsize{21.5}{23.5}\selectfont\bfseries REPLACENAME}\\[2pt]
+  {\fontsize{11.55}{13.2}\selectfont\bfseries Mechanical Engineer | Product Development, CAE \& Structural Dynamics}\\[4pt]
+  REPLACELOCATION \enspace|\enspace
+  \href{tel:REPLACEPHONE}{REPLACEPHONE} \enspace|\enspace
+  \href{mailto:REPLACEEMAIL}{REPLACEEMAIL}\\[1.5pt]
+  \href{REPLACELINKEDIN}{REPLACELINKEDIN} \enspace|\enspace
+  \href{REPLACEPORTFOLIO}{REPLACEPORTFOLIO}\\[1.5pt]
+\end{minipage}
+\hfill
+\begin{minipage}[t]{0.17\linewidth}
+  \vspace{0pt}
+  \raggedleft
+  \IfFileExists{candidate_photo.jpeg}{\includegraphics[width=2.35cm,height=3.00cm,keepaspectratio]{candidate_photo.jpeg}}{\rule{0pt}{3.00cm}\hspace{2.35cm}}
+\end{minipage}
+
+\section{Professional Profile}
+Mechanical engineer with nearly six years of industrial experience developing machinery, renewable-energy mechanisms and mechanical systems from concept and analysis through manufacturing and installation. Experienced in 3D CAD, structural and dynamic CAE, vibration-system development, component selection, production documentation and cross-functional manufacturing support. Currently completing an M.Sc. in Wind Energy Engineering, applying an established background in mechanical simulation and engineering automation to wind-turbine load analysis, aeroelastic simulation and wind-farm site assessment.
+
+\section{Core Engineering Expertise}
+\begin{tabularx}{\linewidth}{@{}p{5cm}X@{}}
+\textbf{Product development} & Requirements definition, concept development, detailed design, design for manufacturing, installation support\\
+\textbf{CAD \& documentation} & CATIA V5, SOLIDWORKS, Siemens NX, manufacturing drawings, bills of materials, SAP-based product data\\
+\textbf{CAE \& dynamics} & ANSYS Workbench, structural analysis, modal analysis, harmonic response, vibration and resonance assessment\\
+\textbf{Machinery \& mechanisms} & Vibrating machinery, motor and excitation-system selection, solar tracking and automated cleaning mechanisms\\
+\textbf{Programming \& simulation} & Python, MATLAB/Simulink, OpenFAST, Power BI, engineering workflow automation\\
+\textbf{Project execution} & Manufacturing and assembly support, technical coordination, design revisions, supplier and shop-floor communication
+\end{tabularx}
+
+\section{Professional Experience}
+\cvjob{Development Engineer - Solar Tracking Systems \& Automated Mechanisms}{01/2022--02/2023}{Paydar | Solar-Energy Systems}{Tehran}
+\begin{itemize}
+  \item Designed photovoltaic tracking structures, mounting components and mechanical assemblies in SOLIDWORKS for reliable manufacture and installation.
+  \item Used ANSYS structural analyses to refine components, contributing to an approximately 10\% reduction in production scrap and raw-material waste.
+  \item Developed an automated panel-cleaning mechanism using electric motors, guide rails and wheels for controlled movement across panel surfaces.
+  \item Delivered the cleaning mechanism from concept and detailed design through manufacturing and assembly.
+  \item Prepared manufacturing drawings, bills of materials and component specifications, and maintained engineering data in SAP-based systems.
+\end{itemize}
+
+\cvjob{Mechanical Engineer - Machinery Development \& Structural Dynamics}{03/2017--12/2021}{TehranRigzar | Mining \& Mineral-Processing Equipment}{Tehran}
+\begin{itemize}
+  \item Designed mechanical equipment and assemblies for aggregate-processing plants, including jaw crushers, belt conveyors, high-frequency vibrating screens and aggregate washing systems.
+
+  \item Created machine assemblies, structural components, mechanical interfaces and manufacturing drawings in CATIA V5.
+
+  \item Co-developed a high-frequency vibrating screen based on laboratory screening studies and defined operating requirements.
+
+  \item Helped replace the company's legacy crankshaft-driven screen with a vibration-motor-driven design intended to improve reliability and simplify maintenance.
+
+  \item Performed modal and harmonic-response analyses in ANSYS to evaluate the dynamic response of the screening system.
+
+  \item Collaborated with the engineering team on operating calculations and vibration-motor selection for the final machine configuration.
+
+\end{itemize}
+
+\newpage
+
+\section{Current Technical Specialisation}
+\cvproject{M.Sc. Wind Energy Engineering - Flensburg University of Applied Sciences}{03/2023--present}
+\begin{itemize}
+  \item \textbf{Master's thesis:} Developing a rotor-as-sensor approach to estimate wind speed, wind direction, vertical shear and veer from measurable turbine-response signals.
+
+  \item Automating simulation and signal-processing workflows in Python, with a planned comparison of linear and neural-network estimators.
+
+  \item Analysed aeroelastic loads and structural response for a 20 MW offshore wind turbine with a monopile foundation using OpenFAST, Python and MATLAB.
+
+  \item Completed wind-farm planning and environmental assessment in windPRO and QGIS, covering turbine layout, energy yield, noise, shadow flicker and bat curtailment.
+\end{itemize}
+
+\section{Selected Engineering Projects}
+\cvproject{Autonomous Underwater Welding Robot - Motion Control}{M.Sc. thesis project}
+\begin{itemize}
+  \item Developed and implemented a MATLAB/Simulink motion-control system enabling precise movement and positioning of an autonomous underwater welding robot.
+\end{itemize}
+
+\cvproject{Hand Prosthesis \& Additive Manufacturing}{Volunteer project}
+\begin{itemize}
+  \item Designed and prototyped mechanical components for a hand prosthesis using 3D printing, supporting iterative development from digital model to manufactured parts.
+  \item Worked with 3D-printer hardware and production settings to manufacture and refine prototype components.
+\end{itemize}
+
+\section{Education}
+\cvedu{M.Sc. Wind Energy Engineering - Current grade average: 1.9}{03/2023--present}{Flensburg University of Applied Sciences, Flensburg, Germany}{Expected graduation: February 2027}
+
+\cvedu{M.Sc. Mechanical Engineering}{09/2014--01/2017}{Hakim Sabzevari University, Sabzevar}{Control systems and robotics}
+
+\cvedu{B.Sc. Mechanical Engineering}{09/2008--06/2013}{Azad University, Tehran}{Mechanical design and vibration analysis}
+
+\section{Selected Training \& Certifications}
+\begin{tabularx}{\linewidth}{@{}p{4cm}X@{}}
+\textbf{Python programming} & HarvardX\\
+\textbf{ANSYS} & IEEE training\\
+\textbf{SOLIDWORKS} & Technical and Vocational Training Organization\\
+\textbf{CATIA V5} & Amirkabir University of Technology
+\end{tabularx}
+
+\section{Languages}
+\begin{tabularx}{\linewidth}{@{}p{4cm}X@{}}
+\textbf{English} & C1; IELTS overall score 7.0\\
+\textbf{German} & B1; preparing for certification
+\end{tabularx}
+
+\end{document}

@@ -1,0 +1,385 @@
+# V1.3 broad career map. Search broadly; qualification claims remain evidence-based.
+families:
+  wind_loads_structures:
+    tier: core
+    label: Wind turbine loads, structures & simulation
+    evidence:
+    - M.Sc. Wind Energy Engineering
+    - OpenFAST aeroelastic simulation of a 20 MW offshore wind turbine
+    - IEC 61400-1 / DNV-ST-0437 design-load work
+    - Structural-load and fatigue-channel evaluation
+    - ANSYS structural dynamics background
+    match_keywords:
+    - wind turbine
+    - wind energy
+    - offshore wind
+    - openfast
+    - loads engineer
+    - structural engineer
+    - load calculation
+    - aeroelastic
+    - fatigue
+    - lastberechnung
+    - windenergie
+    - offshore windenergie
+    queries_en:
+    - wind energy engineer
+    - wind turbine loads engineer
+    - wind turbine structural engineer
+    - wind turbine simulation engineer
+    - offshore wind engineer
+    - load calculation engineer wind
+    queries_de:
+    - Ingenieur Windenergie
+    - Berechnungsingenieur Windenergie
+    - Lastenberechnungsingenieur Windenergie
+    - Strukturingenieur Windenergie
+    - Simulationsingenieur Windenergie
+    - Offshore Wind Ingenieur
+  cae_structural_dynamics:
+    tier: core
+    label: CAE, FEA, structural mechanics & dynamics
+    evidence:
+    - Professional ANSYS static structural analysis
+    - Professional modal and harmonic-response analysis
+    - Structural dynamics, vibration, stress/deformation assessment
+    - Abaqus listed as a technical skill
+    match_keywords:
+    - cae
+    - fea
+    - fem
+    - finite element
+    - structural analysis
+    - structural dynamics
+    - vibration
+    - modal
+    - harmonic response
+    - ansys
+    - berechnungsingenieur
+    - strukturdynamik
+    - schwingung
+    queries_en:
+    - CAE engineer
+    - FEA engineer
+    - finite element engineer
+    - structural analysis engineer
+    - structural dynamics engineer
+    - vibration engineer
+    - simulation engineer mechanical
+    queries_de:
+    - Berechnungsingenieur
+    - FEM Ingenieur
+    - CAE Ingenieur
+    - Simulationsingenieur Maschinenbau
+    - Ingenieur Strukturdynamik
+    - Schwingungsingenieur
+  mechanical_product_development:
+    tier: core
+    label: Mechanical design, machinery & product development
+    evidence:
+    - Nearly six years of mechanical engineering/development experience
+    - Mechanical design in SOLIDWORKS and CATIA V5
+    - Mining and mineral-processing machinery development
+    - Solar tracking structures and automated cleaning mechanism
+    - Fabrication drawings, BOMs, manufacturability and production support
+    match_keywords:
+    - mechanical engineer
+    - mechanical design
+    - design engineer
+    - product development
+    - development engineer
+    - machinery
+    - solidworks
+    - catia
+    - konstruktion
+    - entwicklungsingenieur
+    - maschinenbau
+    - produktentwicklung
+    queries_en:
+    - mechanical engineer
+    - mechanical design engineer
+    - development engineer mechanical
+    - product development engineer mechanical
+    - machinery design engineer
+    - R&D engineer mechanical
+    queries_de:
+    - Maschinenbauingenieur
+    - Entwicklungsingenieur Maschinenbau
+    - Konstruktionsingenieur
+    - Konstrukteur Maschinenbau
+    - Produktentwicklungsingenieur
+    - Forschungs- und Entwicklungsingenieur Maschinenbau
+  renewable_energy_projects:
+    tier: core
+    label: Renewable-energy engineering & project roles
+    evidence:
+    - Wind Energy Engineering studies
+    - Wind-farm planning with windPRO
+    - Energy-yield, noise, shadow-flicker and bat-curtailment assessment
+    - Professional solar-energy systems development
+    match_keywords:
+    - renewable energy
+    - wind farm
+    - solar
+    - energy engineer
+    - project engineer
+    - windpro
+    - erneuerbare energien
+    - projektingenieur wind
+    - solarenergie
+    queries_en:
+    - renewable energy engineer
+    - project engineer wind energy
+    - project engineer renewable energy
+    - wind farm engineer
+    - solar mechanical engineer
+    - energy systems engineer renewable
+    queries_de:
+    - Ingenieur Erneuerbare Energien
+    - Projektingenieur Windenergie
+    - Projektingenieur Erneuerbare Energien
+    - Windpark Ingenieur
+    - Ingenieur Solarenergie
+    - Energieingenieur Erneuerbare Energien
+  simulation_computational_engineering:
+    tier: adjacent
+    label: Simulation, computational engineering & engineering automation
+    evidence:
+    - Python utilities for simulation automation and batch execution
+    - Python/MATLAB post-processing and visualization
+    - OpenFAST output monitoring tool
+    - MATLAB/Simulink control-system thesis
+    match_keywords:
+    - simulation engineer
+    - computational engineer
+    - scientific computing
+    - simulation automation
+    - python engineering
+    - matlab
+    - digital engineering
+    - simulationsingenieur
+    - berechnungsautomatisierung
+    queries_en:
+    - computational engineer
+    - simulation automation engineer
+    - scientific software engineer engineering
+    - engineering data analyst
+    - digital engineering engineer
+    - Python engineer simulation
+    queries_de:
+    - Computational Engineer
+    - Simulationsingenieur Python
+    - Ingenieur Berechnungsautomatisierung
+    - Engineering Data Analyst
+    - Digital Engineering Ingenieur
+  manufacturing_project_engineering:
+    tier: adjacent
+    label: Manufacturing support & project engineering
+    evidence:
+    - Manufacturing coordination and on-site installation support
+    - Fabrication drawings and BOMs
+    - Manufacturability improvement with ~10% scrap/raw-material reduction
+    - Machine and mechanism development from requirements to fabrication
+    match_keywords:
+    - manufacturing engineer
+    - production engineer
+    - project engineer mechanical
+    - industrialization
+    - manufacturability
+    - fertigung
+    - produktion
+    - projektingenieur maschinenbau
+    queries_en:
+    - manufacturing engineer mechanical
+    - production engineer mechanical
+    - project engineer mechanical
+    - industrialization engineer mechanical
+    queries_de:
+    - Fertigungsingenieur Maschinenbau
+    - Produktionsingenieur Maschinenbau
+    - Projektingenieur Maschinenbau
+    - Industrialisierungsingenieur Maschinenbau
+  cae_application_consulting:
+    tier: adjacent
+    label: CAE/application engineering & technical consulting
+    evidence:
+    - Professional ANSYS experience
+    - Broad CAD/CAE toolset
+    - Technical documentation and engineering communication
+    - Python/MATLAB-supported analysis workflows
+    match_keywords:
+    - application engineer cae
+    - application engineer simulation
+    - cae consultant
+    - technical consultant engineering
+    - applikationsingenieur
+    - anwendungsingenieur
+    - technische beratung cae
+    queries_en:
+    - CAE application engineer
+    - simulation application engineer
+    - technical consultant CAE
+    - application engineer mechanical simulation
+    queries_de:
+    - Applikationsingenieur CAE
+    - Anwendungsingenieur Simulation
+    - Technischer Berater CAE
+    - Applikationsingenieur Maschinenbau
+  controls_robotics_mechatronics:
+    tier: stretch
+    label: Controls, robotics & mechatronics
+    evidence:
+    - M.Sc. Mechanical Engineering specialization in control systems and robotics
+    - MATLAB/Simulink motion-control thesis for an autonomous underwater welding robot
+    - Electric-motor-driven automated cleaning mechanism
+    match_keywords:
+    - controls engineer
+    - control systems
+    - robotics engineer
+    - mechatronics
+    - motion control
+    - regelungstechnik
+    - robotik
+    - mechatronik
+    queries_en:
+    - junior controls engineer
+    - control systems engineer mechanical
+    - robotics engineer mechanical
+    - mechatronics development engineer
+    queries_de:
+    - Ingenieur Regelungstechnik
+    - Entwicklungsingenieur Regelungstechnik
+    - Robotik Ingenieur
+    - Entwicklungsingenieur Mechatronik
+  systems_research_engineering:
+    tier: stretch
+    label: Systems, research & interdisciplinary engineering
+    evidence:
+    - Cross-domain mechanical, renewable-energy, simulation and automation work
+    - Academic and professional R&D-style project experience
+    - Requirement-to-design-to-analysis workflow across multiple industries
+    match_keywords:
+    - systems engineer
+    - research engineer
+    - r&d engineer
+    - technical systems
+    - systemingenieur
+    - forschungsingenieur
+    queries_en:
+    - research engineer mechanical
+    - R&D engineer energy
+    - systems engineer mechanical
+    - systems engineer renewable energy
+    - research engineer simulation
+    - R&D engineer mechanical systems
+    - systems development engineer
+    queries_de:
+    - Forschungsingenieur Maschinenbau
+    - Forschungsingenieur Energietechnik
+    - Systemingenieur Maschinenbau
+    - Systemingenieur Erneuerbare Energien
+    - Forschungsingenieur Simulation
+    - Entwicklungsingenieur Systeme
+    - Systementwicklungsingenieur
+  wind_planning_assessment:
+    tier: adjacent
+    label: Wind-farm planning, site assessment & renewable-energy analysis
+    evidence:
+    - windPRO/QGIS wind-farm planning
+    - Energy-yield estimation
+    - Noise and shadow-flicker assessment
+    - Bat-curtailment assessment
+    - Wind Energy Engineering studies
+    match_keywords:
+    - wind farm planning
+    - wind farm
+    - site assessment
+    - wind resource
+    - energy yield
+    - windpro
+    - qgis
+    - project development wind
+    - windparkplanung
+    - standortbewertung
+    - energieertrag
+    - schall
+    - schattenwurf
+    - projektentwicklung wind
+    queries_en:
+    - wind farm planning engineer
+    - wind site assessment engineer
+    - renewable energy analyst wind
+    - wind energy project engineer
+    - wind farm project engineer
+    - junior wind resource analyst
+    queries_de:
+    - Ingenieur Windparkplanung
+    - Ingenieur Standortbewertung Windenergie
+    - Projektingenieur Windparkplanung
+    - Projektentwickler Windenergie technisch
+    - Windenergie Analyst
+    - Ingenieur Energieertrag Wind
+  test_validation_engineering:
+    tier: adjacent
+    label: Test, validation & engineering verification
+    evidence:
+    - Laboratory screening studies supporting machinery design
+    - CAE-based verification of structural/dynamic behaviour
+    - 3D-printed prosthesis prototyping
+    - Manufacturing/assembly/on-site installation support
+    match_keywords:
+    - test engineer
+    - validation engineer
+    - verification engineer
+    - prototype
+    - testing
+    - test rig
+    - versuchsingenieur
+    - validierungsingenieur
+    - erprobung
+    - prüfingenieur
+    - prototyp
+    queries_en:
+    - mechanical test engineer
+    - validation engineer mechanical
+    - verification engineer mechanical
+    - test engineer structures
+    - prototype development engineer
+    queries_de:
+    - Versuchsingenieur Maschinenbau
+    - Validierungsingenieur Maschinenbau
+    - Erprobungsingenieur
+    - Prüfingenieur Mechanik
+    - Entwicklungsingenieur Versuch
+  reliability_dynamics_engineering:
+    tier: stretch
+    label: Mechanical reliability, vibration & condition-oriented engineering
+    evidence:
+    - Professional modal/harmonic-response and vibration analysis
+    - Vibration-motor-driven machinery redesign intended to improve reliability and
+      maintenance
+    - Structural/dynamic response assessment
+    - Machinery development and manufacturing support
+    match_keywords:
+    - reliability engineer
+    - mechanical integrity
+    - vibration engineer
+    - condition monitoring
+    - rotating equipment
+    - maintenance engineering
+    - zuverlässigkeit
+    - schwingungsanalyse
+    - zustandsüberwachung
+    - maschinenzuverlässigkeit
+    queries_en:
+    - mechanical reliability engineer
+    - vibration engineer
+    - mechanical integrity engineer junior
+    - condition monitoring engineer mechanical
+    - rotating equipment engineer junior
+    queries_de:
+    - Zuverlässigkeitsingenieur Maschinenbau
+    - Ingenieur Schwingungsanalyse
+    - Ingenieur Zustandsüberwachung
+    - Berechnungsingenieur Dynamik
+    - Ingenieur Maschinenzuverlässigkeit

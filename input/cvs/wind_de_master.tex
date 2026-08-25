@@ -1,0 +1,223 @@
+\documentclass[10pt,a4paper]{article}
+
+% ---------- Seiten- und Schrifteinstellungen ----------
+\usepackage[a4paper,top=1.20cm,bottom=1.20cm,left=1.55cm,right=1.55cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[ngerman]{babel}
+\usepackage[scaled=0.96]{helvet}
+\renewcommand{\familydefault}{\sfdefault}
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{tabularx}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage[hidelinks]{hyperref}
+\usepackage{ragged2e}
+\usepackage{fancyhdr}
+\usepackage{lastpage}
+
+% ---------- PDF-Metadaten ----------
+\hypersetup{
+  pdftitle={REPLACENAME - Lebenslauf Windenergie},
+  pdfauthor={REPLACENAME},
+  pdfsubject={Windturbinenlasten, aeroelastische Simulation, Strukturdynamik und Python-Automatisierung}
+}
+
+% ---------- Stil ----------
+\definecolor{heading}{HTML}{202020}
+\definecolor{muted}{HTML}{555555}
+\definecolor{rulecolor}{HTML}{777777}
+
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+\fancyfoot[L]{\scriptsize\color{muted}REPLACENAME}
+\fancyfoot[R]{\scriptsize\color{muted}\thepage/\pageref{LastPage}}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0pt}
+\setlist[itemize]{leftmargin=1.18em,itemsep=2.0pt,topsep=2.5pt,parsep=0pt,partopsep=0pt}
+\urlstyle{same}
+\RaggedRight
+
+\titleformat{\section}
+  {\large\bfseries\color{heading}}
+  {}{0pt}{}
+  [\vspace{-0.22em}\color{rulecolor}\titlerule]
+\titlespacing*{\section}{0pt}{0.55em}{0.3em}
+
+% Einträge über die volle Breite: Inhalt links, Datum bzw. Angabe rechts.
+\newcommand{\cvjob}[4]{%
+  \begin{tabularx}{\linewidth}{@{}Xr@{}}
+    \textbf{#1} & \textbf{#2}\\[1pt]
+    \textit{#3} & \textit{#4}
+  \end{tabularx}
+  \vspace{0.05em}
+}
+
+\newcommand{\cvproject}[2]{%
+  \begin{tabularx}{\linewidth}{@{}Xr@{}}
+    \textbf{#1} & \textbf{#2}
+  \end{tabularx}
+  \vspace{0.08em}
+}
+
+\newcommand{\cvedu}[4]{%
+  \noindent
+  \textbf{#1}\hfill\mbox{\textbf{#2}}\par
+  \vspace{2pt}
+  \noindent
+  \textit{#3}\hfill\mbox{\textit{#4}}\par
+  \vspace{0.3em}
+}
+\hyphenpenalty=7000
+\exhyphenpenalty=7000
+\emergencystretch=1em
+\renewcommand{\arraystretch}{1.1}
+\hyphenation{SOLIDWORKS OpenFAST}
+
+\begin{document}
+\fontsize{11.25}{12.75}\selectfont
+
+% ---------- Kopfbereich ----------
+\begin{minipage}[t]{0.79\linewidth}
+  \vspace{0pt}
+  {\fontsize{21.5}{23.5}\selectfont\bfseries REPLACENAME}\\[2pt]
+  {\fontsize{11.55}{13.2}\selectfont\bfseries Maschinenbauingenieur | WEA-Lastanalyse \& Windparkbewertung}\\[4pt]
+  REPLACELOCATION \enspace|\enspace
+  \href{tel:REPLACEPHONE}{REPLACEPHONE} \enspace|\enspace
+  \href{mailto:REPLACEEMAIL}{REPLACEEMAIL}\\[1.5pt]
+  \href{REPLACELINKEDIN}{REPLACELINKEDIN} \enspace|\enspace
+  \href{REPLACEPORTFOLIO}{REPLACEPORTFOLIO}\\[1.5pt]
+\end{minipage}
+\hfill
+\begin{minipage}[t]{0.17\linewidth}
+  \vspace{0pt}
+  \raggedleft
+  \IfFileExists{candidate_photo.jpeg}{\includegraphics[width=2.35cm,height=3.00cm,keepaspectratio]{candidate_photo.jpeg}}{\rule{0pt}{3.00cm}\hspace{2.35cm}}
+\end{minipage}
+
+\section{Kurzprofil}
+Maschinenbauingenieur mit nahezu sechs Jahren Industrieerfahrung in Produktentwicklung, Strukturdynamik und simulationsgestützter Konstruktion, mit aktueller Spezialisierung auf Windenergie. Erfahrung mit aeroelastischen OpenFAST-Simulationen, Auslegungslastfällen nach IEC 61400-1, Python-Automatisierung, Nachverarbeitung von Lastdaten sowie Windparkplanung in windPRO und QGIS. Verbindet Windenergie-Simulation mit praktischer Maschinen- und Systementwicklung bis zu Fertigung und Installation.
+
+\section{Technische Kernkompetenzen}
+\begin{tabularx}{\linewidth}
+{@{}>{\raggedright\arraybackslash}p{4.5cm}X@{}}
+\textbf{WEA-Simulation} & OpenFAST, aeroelastische Modellierung, Auslegungslastfälle nach IEC 61400-1, Analyse von Anlagensignalen und Strukturlasten\\[2pt]
+\textbf{Engineering-Automatisierung} & Python-Skripte, Generierung von Simulationsfällen, Batch-Ausführung, Monitoring, Datenorganisation und Nachverarbeitung\\[2pt]
+\textbf{Windparkplanung} & windPRO, QGIS, Anlagenlayout, Energieertragsbewertung, Schallimmissionen, Schattenwurf und Abschaltungen zum Fledermausschutz\\[2pt]
+\textbf{Strukturdynamik} & ANSYS Workbench, Modalanalyse, harmonische Analyse, Schwingungs- und Resonanzbewertung\\[2pt]
+\textbf{Maschinenbau} & CATIA V5, SOLIDWORKS, Siemens NX, fertigungsgerechte Konstruktion, Zeichnungen und Stücklisten\\[2pt]
+\textbf{Programmierung/Data} & Python, MATLAB/Simulink, Power BI, Excel
+\end{tabularx}
+
+\section{Ausgewählte Erfahrung in der Windenergie}
+\cvproject{Masterarbeit - Rotorbasierte Windzuflussschätzung}{Laufend}
+\begin{itemize}
+  \item Entwicklung eines Rotor-als-Sensor-Ansatzes zur Schätzung von Windgeschwindigkeit, Windrichtung, vertikaler Windscherung und Winddrehung aus messbaren, mit OpenFAST simulierten Anlagensignalen.
+
+  \item Automatisierung der Simulations- und Signalverarbeitungsabläufe in Python sowie Vergleich interpretierbarer linearer Schätzer mit Modellen auf Basis neuronaler Netze.
+\end{itemize}
+\vspace{1pt}
+\cvproject{20-MW-Offshore-Windenergieanlage - Aeroelastische Lastanalyse}{Hochschulprojekt}
+\begin{itemize}
+  \item Durchführung von OpenFAST-Simulationen für eine 20-MW-Offshore-Windenergieanlage mit Monopile-Gründung für Auslegungslastfälle nach IEC 61400-1 mit Python- und MATLAB-gestützten Abläufen.
+  \item Nachverarbeitung von Anlagensignalen sowie Bewertung von Strukturlasten und dynamischem Verhalten unter unterschiedlichen Umwelt- und Betriebsbedingungen.
+  \item Erstellung technischer Diagramme und vergleichender Ergebnisdarstellungen zur Interpretation lastbestimmender Bedingungen und des Anlagenverhaltens.
+\end{itemize}
+\vspace{1pt}
+\cvproject
+  {\href{REPLACEPROJECTLINK}
+  {OpenFAST-Workflow-Automatisierung \& Output-Monitoring}}
+  {Hochschulprojekt}
+
+\begin{itemize}
+  \item Entwicklung von Python-Werkzeugen für OpenFAST-Fallgenerierung, Batch-Ausführung und automatisierte Ablage der Ausgabedaten.
+
+  \item Entwicklung eines Python-Tools zur Echtzeit- und Postprocessing-Visualisierung von OpenFAST-Ausgaben für die schnelle Prüfung von Betriebsparametern, Strukturlasten und dynamischer Anlagenreaktion.
+\end{itemize}
+\vspace{1pt}
+\cvproject{Windparkplanung und Umweltbewertung}{Hochschulprojekt}
+\begin{itemize}
+  \item Durchführung einer standortbezogenen Windparkplanung in windPRO und QGIS, einschließlich Anlagenlayout, Energieertragsschätzung, Schallimmissionsbewertung und Schattenwurfanalyse.
+
+  \item Bewertung fledermausbedingter Abschaltungen und ihres Einflusses auf den jährlichen Energieertrag.
+
+  \item Erstellung von Video-Tutorials zu ausgewählten windPRO-Workflows und zur Ergebnisinterpretation.
+\end{itemize}
+
+\newpage
+
+\section{Berufserfahrung}
+\cvjob{Entwicklungsingenieur - Solar-Trackingsysteme \& automatisierte Mechanismen}{01/2022--02/2023}{Paydar | Solarenergiesysteme}{Teheran}
+\begin{itemize}
+  \item Konstruktion von Photovoltaik-Nachführsystemen, Befestigungskomponenten und mechanischen Baugruppen in SOLIDWORKS, unterstützt durch strukturelle Analysen in ANSYS.
+  \item Entwicklung eines elektromotorisch angetriebenen Reinigungssystems für Solarmodule mit Schienen- und Radführung sowie Begleitung durch Detailkonstruktion, Fertigung, Montage und erfolgreiche Installation vor Ort.
+  \item Überarbeitung mechanischer Komponenten zur Verbesserung der Herstellbarkeit; Beitrag zu einer Reduzierung von Produktionsausschuss und Rohmaterialabfall um etwa 10\%.
+  \item Erstellung von Fertigungszeichnungen, Stücklisten und technischer Dokumentation in SAP-basierten Systemen.
+\end{itemize}
+
+\cvjob{Maschinenbauingenieur - Maschinenentwicklung \& Strukturdynamik}{03/2017--12/2021}{TehranRigzar | Bergbau- \& Aufbereitungstechnik}{Teheran}
+\begin{itemize}
+  \item Konstruktion mechanischer Anlagen und Baugruppen für die Gesteinsaufbereitung, darunter Backenbrecher, Förderbänder, Hochfrequenz-Schwingsiebe und Waschanlagen für Zuschlagstoffe.
+
+  \item Erstellung von Maschinenbaugruppen, Strukturbauteilen, mechanischen Schnittstellen und Fertigungszeichnungen in CATIA V5.
+
+  \item Mitentwicklung eines Hochfrequenz-Schwingsiebs auf Grundlage von Laboruntersuchungen zur Siebung und definierten Betriebsanforderungen.
+
+  \item Durchführung von Modal- und harmonischen Analysen in ANSYS zur Bewertung des dynamischen Verhaltens des Siebsystems.
+
+\end{itemize}
+
+\section{Studium}
+
+\cvedu
+  {M.Sc. Wind Energy Engineering -- Notenschnitt: 1,9}
+  {03/2023--heute}
+  {Hochschule Flensburg, Flensburg, Deutschland}
+  {Abschluss: Februar 2027}
+
+\cvedu
+  {M.Sc. Mechanical Engineering}
+  {09/2014--01/2017}
+  {Hakim Sabzevari University, Sabzevar}
+  {Regelungstechnik und Robotik}
+
+\vspace{0.6mm}
+
+\textit{Abschlussarbeit:} Entwicklung einer MATLAB/Simulink-Bewegungssteuerung zur präzisen Positionierung eines autonomen Schweißroboters für Unterwassereinsätze.
+
+\vspace{1.2mm}
+
+\cvedu
+  {B.Sc. Mechanical Engineering}
+  {09/2008--06/2013}
+  {Islamic Azad University, Teheran}
+  {Maschinenkonstruktion und Schwingungsanalyse}
+\section{Technische Tools}
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{4.75cm}X@{}}
+\textbf{Windenergie} & OpenFAST, windPRO, QGIS\\
+\textbf{Programmierung \& Daten} & Python, MATLAB/Simulink, Power BI, Excel\\
+\textbf{CAE} & ANSYS Workbench, Abaqus\\
+\textbf{CAD} & CATIA V5, SOLIDWORKS, Siemens NX\\
+\textbf{Engineering-Systeme} & SAP, MS Project, technische Dokumentation
+\end{tabularx}
+
+\section{Ausgewählte Weiterbildungen \& Zertifikate}
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{4.75cm}X@{}}
+\textbf{Python-Programmierung} & HarvardX\\
+\textbf{ANSYS} & IEEE-Schulung\\
+\textbf{SOLIDWORKS} & Technical and Vocational Training Organization\\
+\textbf{CATIA V5} & Amirkabir University of Technology
+\end{tabularx}
+
+\section{Sprachen}
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{4.75cm}X@{}}
+\textbf{Englisch} & C1; IELTS-Gesamtergebnis 7,0\\
+\textbf{Deutsch} & B1; Vorbereitung auf eine Zertifikatsprüfung
+\end{tabularx}
+
+\end{document}

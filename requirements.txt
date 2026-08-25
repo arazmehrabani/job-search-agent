@@ -1,0 +1,6 @@
+requests>=2.32
+beautifulsoup4>=4.12
+python-dotenv>=1.0
+PyYAML>=6.0
+openai>=1.0
+plyer>=2.1

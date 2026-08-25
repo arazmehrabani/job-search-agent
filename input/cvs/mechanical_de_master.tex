@@ -1,0 +1,190 @@
+\documentclass[10pt,a4paper]{article}
+
+% ---------- Seiten- und Schrifteinstellungen ----------
+\usepackage[a4paper,top=1.20cm,bottom=1.20cm,left=1.55cm,right=1.55cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[ngerman]{babel}
+\usepackage[scaled=0.96]{helvet}
+\renewcommand{\familydefault}{\sfdefault}
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{tabularx}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage[hidelinks]{hyperref}
+\usepackage{ragged2e}
+\usepackage{fancyhdr}
+\usepackage{lastpage}
+
+% ---------- PDF-Metadaten ----------
+\hypersetup{
+  pdftitle={REPLACENAME - Lebenslauf Maschinenbau},
+  pdfauthor={REPLACENAME},
+  pdfsubject={Maschinenbau, Produktentwicklung, CAE und Strukturdynamik}
+}
+
+% ---------- Stil ----------
+\definecolor{heading}{HTML}{202020}
+\definecolor{muted}{HTML}{555555}
+\definecolor{rulecolor}{HTML}{777777}
+
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+\fancyfoot[L]{\scriptsize\color{muted}REPLACENAME}
+\fancyfoot[R]{\scriptsize\color{muted}\thepage/\pageref{LastPage}}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0pt}
+\setlist[itemize]{leftmargin=1.18em,itemsep=2.0pt,topsep=2.5pt,parsep=0pt,partopsep=0pt}
+\urlstyle{same}
+\RaggedRight
+
+\titleformat{\section}
+  {\large\bfseries\color{heading}}
+  {}{0pt}{}
+  [\vspace{-0.22em}\color{rulecolor}\titlerule]
+\titlespacing*{\section}{0pt}{0.55em}{0.30em}
+
+% Einträge über die volle Breite: Inhalt links, Datum bzw. Angabe rechts.
+\newcommand{\cvjob}[4]{%
+  \begin{tabularx}{\linewidth}{@{}Xr@{}}
+    \textbf{#1} & \textbf{#2}\\[-1pt]
+    \textit{#3} & \textit{#4}
+  \end{tabularx}
+  \vspace{0.05em}
+}
+
+\newcommand{\cvproject}[2]{%
+  \begin{tabularx}{\linewidth}{@{}Xr@{}}
+    \textbf{#1} & \textbf{#2}
+  \end{tabularx}
+  \vspace{0.05em}
+}
+
+\newcommand{\cvedu}[4]{%
+  \noindent
+  \textbf{#1}\hfill\mbox{\textbf{#2}}\par
+  \vspace{2pt}
+  \noindent
+  \textit{#3}\hfill\mbox{\textit{#4}}\par
+  \vspace{0.03em}
+}
+\hyphenation{SOLIDWORKS OpenFAST}
+\emergencystretch=1em
+\renewcommand{\arraystretch}{1.08}
+\begin{document}
+\fontsize{11.25}{12.75}\selectfont
+
+% ---------- Kopfbereich ----------
+\begin{minipage}[t]{0.79\linewidth}
+  \vspace{0pt}
+  {\fontsize{21.5}{23.5}\selectfont\bfseries REPLACENAME}\\[2pt]
+  {\fontsize{11.55}{13.2}\selectfont\bfseries Maschinenbauingenieur | Produktentwicklung, CAE \& Strukturdynamik}\\[4pt]
+  REPLACELOCATION \enspace|\enspace
+  \href{tel:REPLACEPHONE}{REPLACEPHONE} \enspace|\enspace
+  \href{mailto:REPLACEEMAIL}{REPLACEEMAIL}\\[1.5pt]
+  \href{REPLACELINKEDIN}{REPLACELINKEDIN} \enspace|\enspace
+  \href{REPLACEPORTFOLIO}{REPLACEPORTFOLIO}\\[1.5pt]
+\end{minipage}
+\hfill
+\begin{minipage}[t]{0.17\linewidth}
+  \vspace{0pt}
+  \raggedleft
+  \IfFileExists{candidate_photo.jpeg}{\includegraphics[width=2.35cm,height=3.00cm,keepaspectratio]{candidate_photo.jpeg}}{\rule{0pt}{3.00cm}\hspace{2.35cm}}
+\end{minipage}
+
+\section{Kurzprofil}
+Maschinenbauingenieur mit nahezu sechs Jahren Industrieerfahrung in der Entwicklung von Maschinen, Mechanismen für erneuerbare Energien und mechanischen Systemen -- von Konzeption und Analyse bis zu Fertigung und Installation. Erfahrung in 3D-CAD, statischen und dynamischen CAE-Analysen, der Entwicklung von Schwingungssystemen, Komponentenauswahl, Fertigungsdokumentation und bereichsübergreifender Produktionsunterstützung. Derzeitiger Schwerpunkt im M.Sc.-Studium Wind Energy Engineering: Anwendung fundierter Kenntnisse in mechanischer Simulation und Engineering-Automatisierung auf Lastanalysen von Windenergieanlagen, aeroelastische Simulationen und Windpark-Standortbewertungen.
+
+\section{Technische Kernkompetenzen}
+\begin{tabularx}{\linewidth}{@{}p{5.6cm}X@{}}
+\textbf{Produktentwicklung} & Anforderungsdefinition, Konzeptentwicklung, Detailkonstruktion, fertigungsgerechte Konstruktion, Unterstützung bei der Installation\\
+\textbf{CAD \& Dokumentation} & CATIA V5, SOLIDWORKS, Siemens NX, Fertigungszeichnungen, Stücklisten, SAP-basierte Produktdaten\\
+\textbf{CAE \& Dynamik} & ANSYS Workbench, Strukturanalyse, Modalanalyse, harmonische Analyse, Schwingungs- und Resonanzbewertung\\
+\textbf{Maschinen \& Mechanismen} & Schwingmaschinen, Auswahl von Motoren und Erregersystemen, Solar-Nachführung und automatisierte Reinigungsmechanismen\\
+\textbf{Programmierung \& Simulation} & Python, MATLAB/Simulink, OpenFAST, Power BI, Automatisierung technischer Arbeitsabläufe\\
+\textbf{Projektumsetzung} & Fertigungs- und Montageunterstützung, technische Koordination, Konstruktionsänderungen, Kommunikation mit Lieferanten und Fertigung
+\end{tabularx}
+
+\section{Berufserfahrung}
+\cvjob{Entwicklungsingenieur - Solar-Trackingsysteme \& automatisierte Mechanismen}{01/2022--02/2023}{Paydar | Solarenergiesysteme}{Teheran}
+\begin{itemize}
+  \item Konstruktion von Photovoltaik-Nachführsystemen, Befestigungskomponenten und mechanischen Baugruppen in SOLIDWORKS für eine zuverlässige Fertigung und Installation.
+  \item Optimierung von Komponenten mithilfe struktureller Analysen in ANSYS; Beitrag zu einer Reduzierung von Produktionsausschuss und Rohmaterialabfall um etwa 10\%.
+  \item Entwicklung eines automatisierten Reinigungssystems für Solarmodule mit Elektromotoren, Führungsschienen und Rädern für eine kontrollierte Bewegung über die Modulflächen.
+  \item Umsetzung des Reinigungssystems von der Konzept- und Detailkonstruktion bis zu Fertigung und Montage.
+  \item Erstellung von Fertigungszeichnungen, Stücklisten und Komponentenspezifikationen sowie Pflege technischer Daten in SAP-basierten Systemen.
+\end{itemize}
+
+\cvjob{Maschinenbauingenieur - Maschinenentwicklung \& Strukturdynamik}{03/2017--12/2021}{TehranRigzar | Bergbau- \& Aufbereitungstechnik}{Teheran}
+\begin{itemize}
+  \item Konstruktion mechanischer Anlagen und Baugruppen für die Gesteinsaufbereitung, darunter Backenbrecher, Förderbänder, Hochfrequenz-Schwingsiebe und Waschanlagen für Zuschlagstoffe.
+
+  \item Erstellung von Maschinenbaugruppen, Strukturbauteilen, mechanischen Schnittstellen und Fertigungszeichnungen in CATIA V5.
+
+  \item Mitentwicklung eines Hochfrequenz-Schwingsiebs auf Grundlage von Laboruntersuchungen zur Siebung und definierten Betriebsanforderungen.
+
+  \item Mitwirkung beim Ersatz des bisherigen kurbelwellengetriebenen Siebs durch eine Konstruktion mit Vibrationsmotoren zur Verbesserung der Zuverlässigkeit und Vereinfachung der Wartung.
+
+  \item Durchführung von Modal- und harmonischen Analysen in ANSYS zur Bewertung des dynamischen Verhaltens des Siebsystems.
+
+  \item Zusammenarbeit mit dem Entwicklungsteam bei Betriebsberechnungen und der Auswahl der Vibrationsmotoren für die endgültige Maschinenkonfiguration.
+
+\end{itemize}
+
+\newpage
+
+\section{Aktuelle technische Spezialisierung}
+\cvproject{M.Sc. Wind Energy Engineering - Hochschule Flensburg}{03/2023--heute}
+\begin{itemize}
+  \item \textbf{Masterarbeit:} Entwicklung eines Rotor-als-Sensor-Ansatzes zur Schätzung von Windgeschwindigkeit, Windrichtung, vertikaler Windscherung und Winddrehung aus messbaren Anlagensignalen.
+
+  \item Automatisierung der Simulations- und Signalverarbeitungsabläufe in Python mit geplantem Vergleich linearer Schätzer und neuronaler Netze.
+
+  \item Analyse aeroelastischer Lasten und der Strukturreaktion einer 20-MW-Offshore-Windenergieanlage mit Monopile-Gründung mithilfe von OpenFAST, Python und MATLAB.
+
+  \item Durchführung einer Windparkplanung und Umweltbewertung in windPRO und QGIS mit Anlagenlayout, Energieertrag, Schallimmissionen, Schattenwurf und Abschaltungen zum Fledermausschutz.
+\end{itemize}
+
+\section{Ausgewählte Ingenieurprojekte}
+\cvproject{Autonomer Unterwasser-Schweißroboter - Bewegungssteuerung}{M.Sc.-Abschlussprojekt}
+\begin{itemize}
+  \item Entwicklung und Implementierung eines Bewegungssteuerungssystems in MATLAB/Simulink zur präzisen Bewegung und Positionierung eines autonomen Unterwasser-Schweißroboters.
+\end{itemize}
+
+\cvproject{Handprothese \& additive Fertigung}{Ehrenamtliches Projekt}
+\begin{itemize}
+  \item Konstruktion und Prototypenfertigung mechanischer Komponenten für eine Handprothese mittels 3D-Druck; Unterstützung der iterativen Entwicklung vom digitalen Modell bis zum gefertigten Bauteil.
+  \item Arbeit mit 3D-Druckerhardware und Fertigungsparametern zur Herstellung und Optimierung der Prototypenbauteile.
+\end{itemize}
+
+\section{Studium}
+\cvedu
+  {M.Sc. Wind Energy Engineering -- Notenschnitt: 1,9}
+  {03/2023--heute}
+  {Hochschule Flensburg, Flensburg, Deutschland}
+  {Abschluss: Februar 2027}
+
+\cvedu{M.Sc. Mechanical Engineering}{09/2014--01/2017}{Hakim Sabzevari University, Sabzevar}{Regelungstechnik und Robotik}
+
+\cvedu{B.Sc. Mechanical Engineering}{09/2008--06/2013}{Azad University, Teheran}{Maschinenkonstruktion und Schwingungsanalyse}
+
+\section{Ausgewählte Weiterbildungen \& Zertifikate}
+\begin{tabularx}{\linewidth}{@{}p{4.5cm}X@{}}
+\textbf{Python-Programmierung} & HarvardX\\
+\textbf{ANSYS} & IEEE-Schulung\\
+\textbf{SOLIDWORKS} & Technical and Vocational Training Organization\\
+\textbf{CATIA V5} & Amirkabir University of Technology
+\end{tabularx}
+
+\section{Sprachen}
+\begin{tabularx}{\linewidth}{@{}p{4.5cm}X@{}}
+\textbf{Englisch} & C1; IELTS-Gesamtergebnis 7,0\\
+\textbf{Deutsch} & B1; Vorbereitung auf eine Zertifikatsprüfung
+\end{tabularx}
+
+\end{document}

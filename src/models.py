@@ -1,0 +1,53 @@
+from __future__ import annotations
+from dataclasses import dataclass, asdict, field
+from datetime import datetime
+from typing import Optional, Any
+
+
+@dataclass
+class Job:
+    source: str
+    source_id: str
+    title: str
+    company: str
+    location: str
+    url: str
+    apply_url: str = ""
+    description: str = ""
+    published_at: Optional[datetime] = None
+    salary_min: Optional[float] = None
+    salary_max: Optional[float] = None
+    currency: str = "EUR"
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        d = asdict(self)
+        if self.published_at:
+            d["published_at"] = self.published_at.isoformat()
+        return d
+
+
+@dataclass
+class MatchResult:
+    score: int
+    recommendation: str
+    required_match: int = 0
+    nice_to_have_match: int = 0
+    strong_matches: list[str] = field(default_factory=list)
+    partial_matches: list[str] = field(default_factory=list)
+    missing_required: list[str] = field(default_factory=list)
+    missing_nice_to_have: list[str] = field(default_factory=list)
+    risks: list[str] = field(default_factory=list)
+    reasoning: str = ""
+    source: str = "heuristic"
+    job_language: str = "en"
+    employment_type: str = "unknown"
+    career_family: str = "general_engineering"
+    career_family_label: str = "General / interdisciplinary engineering"
+    career_tier: str = "adjacent"
+    transferability: str = ""
+    source_cv: str = ""
+    german_requirement: str = "none"
+
+    def to_dict(self) -> dict:
+        return asdict(self)

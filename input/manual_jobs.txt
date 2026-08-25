@@ -1,0 +1,5 @@
+# Optional: paste one job URL per line.
+# Lines beginning with # are ignored.
+https://jobs.ashbyhq.com/neura-robotics-gmbh/622b2195-a51c-4fef-949d-8156855cfd25/application?utm_source=ro3B2V2me9&src=LinkedIn
+https://jobs.tuvsud.com/job/Wind-Energy-Engineer-Specialist-in-Load-Simulation-for-Onshore-and-Offshore-Turbines-%28fmd%29-1/6328-en_US
+https://jobs.tuvsud.com/job/Werkstudent-im-Bereich-T%C3%BCrme-und-Fundamente-von-Windenergieanlagen-%28wmd%29/6760-en_US
