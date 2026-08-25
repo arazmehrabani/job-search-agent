@@ -25,8 +25,14 @@ def hard_filter(job: Job, cfg: dict) -> tuple[bool, str]:
         return False, "missing required title keyword"
     max_age = cfg.get("search", {}).get("max_age_days", 7)
     a = age_days(job)
+    manual_cfg = cfg.get("sources", {}).get("manual_links", {}) or {}
+    bypass_manual_age = bool(manual_cfg.get("bypass_age_filter", True))
     if a is not None and a > max_age:
-        return False, f"older than {max_age} days"
+        # A URL supplied explicitly by the user is an intentional review request,
+        # not an automatically discovered candidate. If it is still live, evaluate it
+        # even when older than the automated-search freshness window.
+        if not (job.source == "manual" and bypass_manual_age):
+            return False, f"older than {max_age} days"
 
     typ = detect_employment_type(job)
     allowed = set(prefs.get("allowed_employment_types", []) or [])

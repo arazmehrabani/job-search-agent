@@ -118,6 +118,7 @@ sources:
   manual_links:
     enabled: true
     file: "input/manual_jobs.txt"
+    bypass_age_filter: true
   email_alert_files:
     enabled: true
     directory: "input/job_alerts"

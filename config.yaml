@@ -120,6 +120,9 @@ sources:
   manual_links:
     enabled: true
     file: "input/manual_jobs.txt"
+    # Explicitly supplied URLs are always evaluated if still active, even when older
+    # than search.max_age_days. Automated sources still obey the freshness cutoff.
+    bypass_age_filter: true
   email_alert_files:
     enabled: true
     directory: "input/job_alerts"

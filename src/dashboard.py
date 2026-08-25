@@ -40,10 +40,15 @@ def build_dashboard(db: Database, output="output/dashboard.html"):
         loc, loc_full = _clip(r["location"], 38)
         source = _esc(r["source"] or "")
         active = _esc(r["active_status"] or "")
-        status = _esc(r["status"] or "")
+        status_raw = str(r["status"] or "")
+        filter_reason = str(r["filter_reason"] or "") if "filter_reason" in r.keys() else ""
+        if status_raw == "filtered" and filter_reason:
+            status = _esc("Filtered: " + filter_reason)
+        else:
+            status = _esc(status_raw)
         date = _esc((r["published_at"] or "")[:10])
         m = _match_meta(r["match_json"])
-        score = "" if r["match_score"] is None else str(r["match_score"])
+        score = "—" if r["match_score"] is None else str(r["match_score"])
         match_source = str(m.get("source", "") or "")
         if match_source == "heuristic":
             heuristic_count += 1
@@ -124,7 +129,7 @@ a{{color:var(--link);text-decoration:none;font-weight:600}} a:hover{{text-decora
 .chips{{display:flex;gap:4px;flex-wrap:wrap}} .chips span{{background:#f1f3f5;border-radius:5px;padding:3px 5px;font-size:10.5px}}
 details{{margin-top:7px;color:var(--muted);font-size:11px}} summary{{cursor:pointer;color:#536170}} .fitgrid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:3px 10px;margin:5px 0}} .reason{{margin-top:4px;line-height:1.35}}
 tr:hover td{{background:#fbfcfd}} @media(max-width:900px){{.shell{{padding:14px}}}}
-</style></head><body><div class="shell"><h1>Job Search Agent V1.4.1</h1>
+</style></head><body><div class="shell"><h1>Job Search Agent V1.4.2</h1>
 <p class="note">Compact dashboard. <b>PRE</b> means a local heuristic pre-score; <b>AI</b> means Codex/API produced the fit score. Long ATS text is never allowed to expand the company column.</p>
 <div class="cards">
 <div class="card"><b>Total</b><div class="n">{stats.get('total',0)}</div></div>

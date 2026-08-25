@@ -227,5 +227,26 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(out.source_id, "622b2195-a51c-4fef-949d-8156855cfd25")
 
 
+    def test_manual_job_bypasses_age_filter(self):
+        from datetime import datetime, timezone, timedelta
+        from src.filters import hard_filter
+        cfg = load_config("config.yaml")
+        cfg["search"] = dict(cfg.get("search", {}), max_age_days=7)
+        cfg["sources"] = dict(cfg.get("sources", {}))
+        cfg["sources"]["manual_links"] = {"enabled": True, "bypass_age_filter": True}
+        job = Job(source="manual", source_id="x", title="Working Student - Production Engineering", company="NEURA Robotics", location="Riederich", url="https://example.com/job", description="Working student production engineering", published_at=datetime.now(timezone.utc)-timedelta(days=30))
+        ok, reason = hard_filter(job, cfg)
+        self.assertTrue(ok, reason)
+
+    def test_automated_old_job_still_filtered(self):
+        from datetime import datetime, timezone, timedelta
+        from src.filters import hard_filter
+        cfg = load_config("config.yaml")
+        cfg["search"] = dict(cfg.get("search", {}), max_age_days=7)
+        job = Job(source="adzuna", source_id="x", title="Working Student - Production Engineering", company="NEURA Robotics", location="Riederich", url="https://example.com/job", description="Working student production engineering", published_at=datetime.now(timezone.utc)-timedelta(days=30))
+        ok, reason = hard_filter(job, cfg)
+        self.assertFalse(ok)
+        self.assertIn("older than", reason)
+
 if __name__ == "__main__":
     unittest.main()

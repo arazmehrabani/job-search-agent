@@ -13,7 +13,7 @@ from .sources.smartrecruiters import SmartRecruitersSource
 from .sources.manual import ManualLinksSource
 from .sources.email_alert_files import EmailAlertFilesSource
 from .pagecheck import check_and_enrich
-from .filters import hard_filter
+from .filters import hard_filter, age_days
 from .ai import AIEngine
 from .documents import generate_package
 from .notifier import notify
@@ -133,9 +133,11 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
         if active == "expired":
             continue
 
-        ok, _reason = hard_filter(job, cfg)
+        ok, filter_reason = hard_filter(job, cfg)
         if not ok:
+            db.set_filter_reason(fp, filter_reason)
             continue
+        db.set_filter_reason(fp, "")
 
         lang = detect_job_language(job)
         employment = detect_employment_profile(job)
@@ -171,6 +173,14 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
             if processed >= max_ai:
                 continue
             match = ai.match(job, profile, candidate_cv=evidence_bundle, context=context)
+            # Manual links intentionally bypass the automated freshness cutoff. Keep
+            # the age visible as a risk instead of silently skipping the job.
+            a = age_days(job)
+            max_age = cfg.get("search", {}).get("max_age_days", 7)
+            if job.source == "manual" and a is not None and a > max_age:
+                warning = f"Vacancy is about {int(a)} days old, but it was evaluated because you supplied the URL manually."
+                if warning not in match.risks:
+                    match.risks.append(warning)
             processed += 1
             db.set_match(fp, match)
         else:

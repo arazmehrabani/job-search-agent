@@ -1,25 +1,25 @@
-# V1.4.1 Validation Report
+# V1.4.2 Validation Report
 
 ## Automated tests
 
-- 21/21 tests passing.
-- Existing V1.4 regression coverage retained.
-- New live-shape SuccessFactors regression reproduces the TÜV SÜD portal pattern where the first H1 is `Welcome to TÜV SÜD Group Job Portal!`, normal D&I prose contains the word `company`, and the actual ATS metadata appears later as `Company:`.
-- The test verifies the actual role title is recovered, company is `TÜV SÜD Industrie Service GmbH`, location is `München`, employment is full-time, and `Fluent in German` is detected.
-- A scoring regression verifies that correcting the portal title increases the heuristic pre-score instead of leaving the stale wrong-title score cached.
+- 23/23 tests passing.
+- All V1.4.1 parsing, language, employment, deduplication, dashboard and identity-protection regressions are retained.
+- New regression: a manually supplied job older than the automated freshness window is still evaluated when active.
+- New regression: an automatically discovered job of the same age is still filtered by `search.max_age_days`.
 
-## Dashboard
+## Blank-row fix
 
-The dashboard was reduced from 21 columns to 13 main columns. Employment dimensions are combined into compact chips, match-detail fields move into an expandable section, and company/title/location values are clipped and wrapped to prevent a malformed ATS field from destroying the layout. Heuristic values are explicitly marked `PRE`; Codex/API values are marked `AI`.
+V1.4.1 inserted a parsed job into SQLite before applying the hard filters. If the job was then rejected by the 7-day freshness filter, the dashboard could show its title/company/location but no score. V1.4.2 changes the policy for `source=manual`: an explicitly supplied URL bypasses the age cutoff by default (`sources.manual_links.bypass_age_filter: true`) and receives an age warning in match risks. Automatic discovery sources keep the freshness filter.
 
-## Cache behavior
+The database also gains a migrated `filter_reason` field. Any future hard-filtered row is displayed as `Filtered: <reason>` rather than looking broken.
 
-Heuristic scores are recalculated every run. This is intentional and cheap. Therefore a parser correction updates the score on the next run even if the SQLite database already contains a V1.4 heuristic result. Codex/API scores remain cached to avoid unnecessary usage.
+## Existing V1.4.1 fixes retained
 
-## Codex detection
-
-V1.4.1 checks the normal PATH plus the common Windows npm-global location `%APPDATA%\npm\codex.cmd`. An explicit `ai.codex_path` or `CODEX_CLI_PATH` can also be used.
-
-## LaTeX / CV evidence
-
-The five sanitized base/evidence CVs from V1.4 are unchanged. The existing identity-placeholder protection and no-invention rules remain active.
+- TÜV SÜD SuccessFactors portal-title/company parsing.
+- Compact 13-column dashboard.
+- `international` no longer matches internship.
+- `fluent in German` and `German advantageous` handling.
+- Canonical URL/source-ID deduplication.
+- Heuristic PRE scores refresh after parser corrections.
+- Windows Codex CLI discovery.
+- Five sanitized CV evidence/base templates and identity protection.

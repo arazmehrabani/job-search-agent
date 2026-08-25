@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     match_score INTEGER,
     match_json TEXT,
     status TEXT DEFAULT 'new',
+    filter_reason TEXT DEFAULT '',
     first_seen TEXT,
     last_seen TEXT
 );
@@ -47,6 +48,10 @@ class Database:
         self.conn = sqlite3.connect(path)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        # Lightweight migration for databases created before V1.4.2.
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(jobs)").fetchall()}
+        if "filter_reason" not in cols:
+            self.conn.execute("ALTER TABLE jobs ADD COLUMN filter_reason TEXT DEFAULT ''")
         self.conn.commit()
 
     def upsert_job(self, job: Job) -> str:
@@ -142,6 +147,14 @@ class Database:
             "application_status": app["status"] if app else None,
             "package_dir": app["package_dir"] if app else None,
         }
+
+
+    def set_filter_reason(self, fp: str, reason: str):
+        self.conn.execute(
+            "UPDATE jobs SET filter_reason=?, status=? WHERE fingerprint=?",
+            (reason or "", "filtered" if reason else "new", fp),
+        )
+        self.conn.commit()
 
     def set_active(self, fp: str, status: str):
         self.conn.execute("UPDATE jobs SET active_status=? WHERE fingerprint=?", (status, fp))
