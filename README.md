@@ -1,5 +1,7 @@
 # Job Search Agent
 
+[![tests](https://github.com/arazmehrabani/job-search-agent/actions/workflows/tests.yml/badge.svg)](https://github.com/arazmehrabani/job-search-agent/actions/workflows/tests.yml)
+
 A local-first Python workflow for discovering engineering jobs, ranking them against verified candidate evidence, and preparing reviewable application packages under explicit AI and network budgets.
 
 The project is designed around a simple rule: **use deterministic local computation for discovery, filtering, ranking, and traceability; spend AI calls only when they can materially change a decision or create a new deliverable.** Applications are never submitted automatically.
