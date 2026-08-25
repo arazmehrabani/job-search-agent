@@ -2,7 +2,8 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Iterable
+from collections.abc import Mapping
+from typing import Any, Iterable, TypeAlias
 from .models import Job
 
 _TOKEN = re.compile(r"[a-zA-ZÀ-ÿ0-9+#.-]{3,}")
@@ -13,7 +14,10 @@ _STOP = {
 }
 
 
-def _registry_path(value) -> str:
+RegistryInput: TypeAlias = str | Path | Mapping[str, Any] | None
+
+
+def _registry_path(value: RegistryInput) -> str:
     """Accept either the config dict or a direct registry path."""
     if isinstance(value, dict):
         return str(value.get("evidence", {}).get("registry", "input/evidence/evidence.json"))
@@ -22,7 +26,9 @@ def _registry_path(value) -> str:
     return str(value)
 
 
-def load_evidence_registry(value="input/evidence/evidence.json") -> list[dict]:
+def load_evidence_registry(
+    value: RegistryInput = "input/evidence/evidence.json",
+) -> list[dict[str, Any]]:
     p = Path(_registry_path(value))
     if not p.exists():
         return []

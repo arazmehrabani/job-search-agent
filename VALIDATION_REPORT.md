@@ -1,4 +1,4 @@
-# Job Search Agent V1.5 — Validation Report
+# Job Search Agent V1.5.1 — Validation Report
 
 Validation date: 2026-08-13
 

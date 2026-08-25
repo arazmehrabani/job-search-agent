@@ -1,5 +1,5 @@
 # %% [markdown]
-# JOB SEARCH AGENT V1.5 — VS CODE / CONDA RUNNER
+# JOB SEARCH AGENT V1.5.1 — VS CODE / CONDA RUNNER
 #
 # Select the Conda interpreter named `agent`, then run cells with Shift+Enter.
 # V1.5 adds evidence traceability, Fit vs Priority, feedback learning, tiered AI,
@@ -42,7 +42,7 @@ def run_once(dry_run: bool = False):
     db = Database(DB_FILE)
     try:
         backend = AIEngine(cfg).backend_name()
-        print(f"\n=== Job Agent V1.5 | AI backend: {backend} | dry_run={dry_run} ===")
+        print(f"\n=== Job Agent V1.5.1 | AI backend: {backend} | dry_run={dry_run} ===")
         result = run_pipeline(cfg, db, dry_run=dry_run)
         dashboard = build_dashboard(db)
         digest = build_digest(db, min_priority=int(cfg.get("notifications", {}).get("digest_priority_min", 68)))
