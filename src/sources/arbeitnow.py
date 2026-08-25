@@ -92,7 +92,7 @@ class ArbeitnowSource(JobSource):
         url = "https://www.arbeitnow.com/api/job-board-api"
         for page in range(1, self.pages + 1):
             r = requests.get(url, params={"page": page}, timeout=self.timeout,
-                             headers={"User-Agent": "JobSearchAgent/1.8.3"})
+                             headers={"User-Agent": "JobSearchAgent/1.9.0"})
             r.raise_for_status()
             data = r.json()
             batch = data.get("data", []) if isinstance(data, dict) else []

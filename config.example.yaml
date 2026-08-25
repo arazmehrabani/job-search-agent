@@ -44,10 +44,6 @@ search:
   - de
   locations:
   - Germany
-  # V1.8.1 staged freshness policy. 0-14 days are fully eligible; 15-30 days
-  # remain eligible when the live page is still active; 31-45 days survive only
-  # for strong target titles with confirmed live status. max_age_days is retained
-  # as a backwards-compatible fallback for older custom configs.
   fresh_days: 7
   full_eligibility_days: 14
   active_grace_days: 30
@@ -69,6 +65,10 @@ http:
   robots_cache_hours: 12
   max_cached_body_chars: 750000
   robots_user_agent: JobSearchAgent
+  detail_enrichment:
+    max_network_detail_checks_per_run: 45
+    hard_max_with_strong_titles: 60
+    skip_fresh_if_description_chars_at_least: 500
 preferences:
   required_title_keywords: []
   excluded_title_keywords:
@@ -128,7 +128,7 @@ ai:
   timeout_seconds: 300
   fallback_to_heuristic: true
   tiered:
-    enabled: true
+    enabled: false
     screen_min_pre_score: 42
     deep_min_screen_score: 58
     deep_force_pre_score: 72
@@ -137,6 +137,35 @@ ai:
     screen_evidence_limit: 8
     deep_evidence_limit: 16
     manual_force_screen: true
+  budget:
+    enabled: true
+    # Provider calls are deliberately scarce. The official Codex meter is the source
+    # of truth; these are conservative LOCAL ceilings that fail closed before a call.
+    max_calls_per_run: 4
+    max_estimated_input_tokens_per_run: 35000
+    max_failed_calls_per_run: 1
+    max_provider_calls_per_day: 4
+    max_provider_calls_per_allowance_period: 12
+    max_estimated_input_tokens_per_day: 35000
+    max_estimated_input_tokens_per_allowance_period: 90000
+    pause_below_remaining_percent: 10
+    usage_hint_file: input/codex_usage_hint.json
+    ledger_file: ~/.job_search_agent/codex_budget_ledger.jsonl
+    ledger_fail_closed: true
+    manual_pause: false
+  strategy:
+    mode: local_rank_then_deep
+    max_new_deep_per_run: 2
+    deep_min_pre_score: 63
+    deep_min_local_priority: 68
+    skip_deep_if_german_c1_gap: true
+    deep_evidence_limit: 14
+    reserve_calls_for_new_packages: 2
+    max_new_packages_per_run: 2
+    max_repair_packages_per_run: 2
+    reuse_completed_deep: true
+    reuse_legacy_deep: true
+    refresh_if_job_description_changed: true
 sources:
   arbeitsagentur:
     enabled: true
@@ -147,7 +176,7 @@ sources:
     delay_jitter_seconds: 0.25
     respect_robots_txt: true
     robots_fail_open: true
-    user_agent: JobSearchAgent/1.8.3
+    user_agent: JobSearchAgent/1.9.0
     results_per_query: 8
   arbeitnow:
     enabled: true
@@ -324,20 +353,30 @@ documents:
     english_job: en
     mixed_or_unknown: en
     force_cv_and_cover_same_as_job: true
+  ai_generation_mode: single_application_bundle
 notifications:
   desktop: true
   immediate_priority_min: 82
   digest_priority_min: 68
+  local_candidate_pre_min: 76
 safety:
   never_invent_experience: true
   never_overwrite_source_cvs: true
   preserve_redacted_personal_data: true
   auto_submit_applications: false
 automation:
-  watch_interval_minutes: 30
+  watch_interval_minutes: 60
 evidence:
   registry: input/evidence/evidence.json
-  document_evidence_limit: 18
+  document_evidence_limit: 14
+  semantic_selection:
+    enabled: false
+  semantic_audit:
+    enabled: false
+    required_for_ready: false
+  local_trace_audit:
+    enabled: true
+    required_for_ready: true
 priority:
   high_min: 82
   review_min: 68

@@ -1,54 +1,118 @@
-# Job Search Agent V1.8.3 — Validation Report
+# Validation Report - Job Search Agent V1.9.0
 
 Validation date: 2026-08-14
 
-## Automated tests
+## Automated regression suite
 
-`python -m pytest -q`
+```text
+87 passed
+```
 
-Result: **76 passed**.
+Command:
 
-The suite includes the prior V1.3–V1.8.2/Hotfix-1 regressions plus V1.8.3 tests covering:
+```text
+python -m pytest -q
+```
 
-- sanitized DE/EN preferred cover-letter templates;
-- template rendering and PDF compilation;
-- trace-mismatch classification as a repairable metadata issue rather than a false factual failure;
-- regeneration of existing `needs_ai_or_review` packages from cached deep matches;
-- correct `last_run_report.json` telemetry for repair mode.
+Coverage includes all prior regression families plus V1.9 resource-governance safeguards.
 
-## Python syntax/import validation
+V1.9-specific regressions verify:
 
-`python -m compileall -q .`
+- shipped low-remaining-usage hint locks provider execution
+- global ledger prevents a copied/new project folder from resetting the daily budget
+- provider budget is reserved before subprocess execution
+- failed provider calls count toward the breaker/budget
+- LOCAL_PREVIEW performs zero AI/provider calls
+- normal full runs do not regenerate existing `needs_ai_or_review` packages
+- existing application jobs are not needlessly deep-refreshed
+- explicit repair is the only regeneration route and is capped
+- routine job SCREEN and semantic evidence-selection calls are absent from normal execution
+- explicit C1+/fluent-German gaps can be handled locally rather than consuming scarce deep slots
+- new-package generation is capped and overflow is queued
+- one application-bundle call creates the CV and cover-letter payload
+- deterministic trace QA distinguishes supported, missing and mismatched evidence links
 
-Result: **passed**.
+## Python compilation
 
-## Source CV PDF validation
+```text
+python -m compileall -q .
+```
 
-All configured sanitized source CVs compile successfully:
+Passed with no syntax errors.
 
-- `mechanical_de_master.tex` — 2 pages
-- `mechanical_en_master.tex` — 2 pages
-- `wind_de_master.tex` — 2 pages
-- `wind_en_master.tex` — 2 pages
-- `wind_thesis_en_master.tex` — 2 pages
+## LaTeX/PDF validation
 
-## Cover-letter template validation
+All five sanitized master CV templates compiled successfully with pdfLaTeX and remained two pages:
 
-Both canonical templates render from placeholders and compile successfully in the fixture:
+```text
+mechanical_de_master.tex   2 pages
+mechanical_en_master.tex   2 pages
+wind_de_master.tex         2 pages
+wind_en_master.tex         2 pages
+wind_thesis_en_master.tex  2 pages
+```
 
-- German template — 1 page
-- English template — 1 page
+Both V1.9 cover-letter templates were instantiated, compiled, rendered and visually inspected:
 
-The templates contain placeholders and do not ship the personal contact data contained in the supplied style examples.
+```text
+cover_letter_de.tex        1 page
+cover_letter_en.tex        1 page
+```
 
-## Safety / behavior checks
+A layout regression found during validation (subject and salutation joining on one line) was corrected before release and both templates were re-rendered successfully.
 
-- `MATCH_ONLY` does not generate application documents.
-- `FULL_APPLICATION_PREP` can generate documents but never submits an application.
-- `REPAIR_EXISTING_PACKAGES` performs no discovery, page fetching, SCREEN or DEEP job matching.
-- Claim audit distinguishes trace defects from unsupported content.
-- One bounded content-repair pass is allowed; unresolved unsupported content blocks READY.
-- PDF readiness checks the generated artifact, not only process return code.
-- Windows-safe application paths remain enabled.
-- Per-host request throttling, retry/backoff, robots policy and page cache remain enabled.
-- Matching analysis-version compatibility remains `1.8.2` to reuse existing V1.8.2 deep matches.
+## Database/backward-compatibility validation
+
+A copy of an uploaded existing V1.8.x SQLite database was opened with the V1.9 schema/migration code and passed SQLite integrity checking. Existing application records were retained. The application index correctly distinguishes application jobs from company folders and reports missing artifact directories when only the database is copied.
+
+This is why the V1.9 upgrade instructions require copying both:
+
+```text
+output/job_agent.sqlite3
+output/applications/
+```
+
+## AI safety validation
+
+No live Codex provider call was made during release validation.
+
+The shipped `input/codex_usage_hint.json` records the user-reported official state:
+
+```text
+low remaining usage
+reset date recorded in the local usage hint
+```
+
+The budget guard was verified to remain locked at that state. The hint does not automatically unlock merely because the reset date passes; the user must refresh it from the official Usage UI.
+
+The default hard limits are:
+
+```text
+max provider attempts/run:                 4
+max estimated input/run:              35,000
+max failed attempts/run:                   1
+max provider attempts/day:                 4
+max provider attempts/allowance period:   12
+max estimated input/day:              35,000
+max estimated input/allowance period:  90,000
+```
+
+A cross-project provider-attempt ledger is stored outside the project folder so copying/versioning the agent cannot silently reset local safety counters.
+
+## HTTP behavior
+
+Per-host politeness was preserved:
+
+```text
+minimum delay/host: 1.5 s
+jitter:             enabled
+robots.txt:         enabled
+retry/backoff:      enabled
+cache:              enabled
+```
+
+V1.9 improves runtime by prioritizing/capping detail enrichment rather than by increasing request rate.
+
+## Release conclusion
+
+V1.9.0 passes automated, compile, template-render, database-compatibility and fail-closed budget tests. Its primary purpose is to prevent recurrence of the V1.8.3 resource failure mode while preserving discovery quality, existing expensive analyses, truthful application generation and human-controlled application submission.

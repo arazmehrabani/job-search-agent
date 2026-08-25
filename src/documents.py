@@ -134,8 +134,9 @@ def _letter_body_to_latex(letter:str)->str:
 def letter_to_tex(letter:str,profile:dict,job:Job,target_language:str,cfg:dict|None=None,metadata:dict|None=None,match:MatchResult|None=None)->str:
     cfg=cfg or {};metadata=metadata or {};dcfg=cfg.get("documents",{}) or {}
     templates=dcfg.get("cover_letter_templates",{}) or {}
-    path=Path(str(templates.get(target_language,"") or ""))
-    if path.exists():
+    raw_template=str(templates.get(target_language,"") or "").strip()
+    path=Path(raw_template) if raw_template else None
+    if path is not None and path.is_file():
         tex=path.read_text(encoding="utf-8")
     else:
         # Minimal safe fallback; normal releases ship the canonical templates.
@@ -244,26 +245,97 @@ def _language_tailoring_ok(tex:str,target_language:str,employment_type:str)->tup
     if employment_type!="master_thesis" and any(x in low for x in ["seeking a master’s thesis","seeking a master's thesis","suche eine masterarbeit"]):return False,"Non-thesis job, but the CV still contains thesis-only targeting language."
     return True,"ok"
 
+def _local_trace_audit(claims:list[dict], evidence_records:list[dict])->dict:
+    """Cheap deterministic truth/trace gate used in normal V1.9 runs.
+
+    It does not pretend to be a semantic LLM judge. It verifies that every material
+    generated claim cites real evidence and that controlled tools/levels/numbers named
+    in the claim also occur in the cited evidence. Ambiguous cases are held for review
+    rather than spending another Codex call automatically.
+    """
+    catalog={str(x.get("id")):x for x in evidence_records or [] if x.get("id")}
+    controlled=[
+        "ansys","abaqus","catia","solidworks","siemens nx","openfast","matlab","simulink",
+        "sap","windpro","qgis","python","power bi","c1","b1","ielts","fmea","asme","creo",
+        "nastran","patran","femfat","teamcenter","gd&t","corrosion","korrosion",
+    ]
+    results=[];problems=[]
+    for row in claims or []:
+        if not isinstance(row,dict):
+            continue
+        document=str(row.get("document","") or "")
+        claim=str(row.get("claim","") or "").strip()
+        ids=[str(x) for x in (row.get("evidence_ids",[]) or []) if str(x) in catalog]
+        finding={"document":document,"claim":claim,"evidence_ids":ids,"status":"SUPPORTED_TRACE","severity":"none","reason":""}
+        if not claim:
+            continue
+        if not ids:
+            finding.update(status="TRACE_MISSING",severity="major",reason="No valid verified evidence ID is attached to this generated claim.")
+            problems.append(finding);results.append(finding);continue
+        ev_text=" ".join(
+            " ".join([
+                str(catalog[i].get("claim","") or ""),
+                " ".join(str(x) for x in (catalog[i].get("keywords",[]) or [])),
+            ]) for i in ids
+        ).lower()
+        low=claim.lower()
+        missing_terms=[]
+        for term in controlled:
+            if term in low and term not in ev_text:
+                missing_terms.append(term)
+        nums=re.findall(r"(?<![A-Za-z])\d+(?:[.,]\d+)?%?", low)
+        missing_nums=[]
+        for n in nums:
+            n0=n.replace(",",".")
+            if n0 not in ev_text.replace(",","."):
+                # Ignore page counts and generic section numbering, but not percentages,
+                # language levels, years of experience, scores, or quantified results.
+                if n0 in {"1","2","3","4","5"} and "%" not in n0:
+                    continue
+                missing_nums.append(n)
+        if missing_terms or missing_nums:
+            bits=[]
+            if missing_terms:bits.append("controlled term(s) not found in cited evidence: "+", ".join(missing_terms))
+            if missing_nums:bits.append("number(s) not found in cited evidence: "+", ".join(missing_nums))
+            finding.update(status="TRACE_MISMATCH",severity="major",reason="; ".join(bits))
+            problems.append(finding)
+        else:
+            finding["reason"]="Claim cites existing verified evidence IDs; controlled factual markers are consistent with the cited evidence."
+        results.append(finding)
+    return {
+        "ok": bool(results) and not problems,
+        "method": "deterministic_trace_v1",
+        "audited": len(results),
+        "results": results,
+        "unsupported": problems,
+        "note": "Normal runs do not spend an extra Codex call on semantic auditing. Trace ambiguities are held for human review.",
+    }
+
+
 def generate_package(
     job:Job,match:MatchResult,profile:dict,cfg:dict,ai:AIEngine,fp:str,source_cv:CVSource|None,
     evidence_items:list[dict]|None=None,audit_evidence_items:list[dict]|None=None,
 )->tuple[Path,dict]:
-    dcfg=cfg.get("documents",{}) or {}; evidence_items=evidence_items or []; audit_evidence_items=audit_evidence_items or evidence_items
+    """Create one application package with at most ONE AI call in normal V1.9 mode."""
+    dcfg=cfg.get("documents",{}) or {};evidence_items=evidence_items or [];audit_evidence_items=audit_evidence_items or evidence_items
     assets=Path(dcfg.get("assets_dir","input/assets"));outroot=Path(dcfg.get("output_dir","output/applications"));today=datetime.now().strftime("%Y-%m-%d")
     target_language=match.job_language if match.job_language in ("de","en") else "en";lang_tag=target_language.upper()
     pkg,file_tag=_package_layout(outroot,today,job,fp,lang_tag);pkg.mkdir(parents=True,exist_ok=True)
     (pkg/"job.json").write_text(json.dumps(job.to_dict(),ensure_ascii=False,indent=2),encoding="utf-8")
     (pkg/"match.json").write_text(json.dumps(match.to_dict(),ensure_ascii=False,indent=2),encoding="utf-8")
     (pkg/"job_description.txt").write_text(job.description or "",encoding="utf-8")
-    result={"ready":False,"cv_pdf":False,"cover_pdf":False,"cv_pages":None,"target_language":target_language,
-            "employment_type":match.employment_type,"career_family":match.career_family,"source_cv":source_cv.key if source_cv else "",
-            "ai_backend":ai.backend_name(),"notes":[],"cv_evidence_ids":[],"cover_letter_evidence_ids":[],
-            "semantic_evidence_audit_ok":False,"semantic_evidence_audit_count":0,"audit_repair_attempted":False,
-            "cover_letter_word_count":0}
+    result={
+        "ready":False,"cv_pdf":False,"cover_pdf":False,"cv_pages":None,"target_language":target_language,
+        "employment_type":match.employment_type,"career_family":match.career_family,"source_cv":source_cv.key if source_cv else "",
+        "ai_backend":ai.backend_name(),"generation_mode":"single_application_bundle","notes":[],"cv_evidence_ids":[],
+        "cover_letter_evidence_ids":[],"evidence_audit_ok":False,"evidence_audit_method":"deterministic_trace_v1",
+        "semantic_evidence_audit_ok":False,"semantic_evidence_audit_count":0,"audit_repair_attempted":False,
+        "cover_letter_word_count":0,
+    }
     _copy_assets(assets,pkg)
     if source_cv is None or not source_cv.exists:
         result["notes"].append("No configured source CV exists for this job.")
-        (pkg/"package_status.json").write_text(json.dumps(result,indent=2),encoding="utf-8");return pkg,result
+        (pkg/"package_status.json").write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8");return pkg,result
 
     master_tex=source_cv.read();selected_evidence=evidence_payload(evidence_items);audit_evidence=evidence_payload(audit_evidence_items)
     (pkg/"evidence_sources.json").write_text(json.dumps({
@@ -275,117 +347,69 @@ def generate_package(
     (pkg/"evidence_audit_catalog.json").write_text(json.dumps(audit_evidence,ensure_ascii=False,indent=2),encoding="utf-8")
 
     masked,protected=protect_identity_lines(master_tex) if dcfg.get("preserve_identity_and_links_exactly",True) else (master_tex,{})
-    tailored_masked=ai.tailor_cv(masked,job,profile,target_language,match.employment_type,match.career_family_label,source_cv.key,evidence_records=selected_evidence)
-    if protected:
-        tailored,identity_ok=restore_identity_lines(tailored_masked,protected)
-        if not identity_ok:
-            tailored=master_tex;result["notes"].append("AI output dropped a protected identity token; source CV was restored instead.")
-    else:tailored=tailored_masked
+    bundle=ai.application_bundle(
+        masked,job,profile,match,target_language,match.employment_type,match.career_family_label,source_cv.key,
+        evidence_records=selected_evidence,
+    )
+    if not bundle:
+        tailored=master_tex
+        letter="[AI/Codex application bundle was not generated.]"
+        result["notes"].append(f"Application bundle generation failed or was budget-blocked: {ai.last_bundle_error or 'unknown reason'}")
+        cv_trace=[];cover_trace=[];metadata={}
+    else:
+        tailored_masked=str(bundle.get("cv_latex","") or "")
+        if protected:
+            tailored,identity_ok=restore_identity_lines(tailored_masked,protected)
+            if not identity_ok:
+                tailored=master_tex
+                result["notes"].append("AI output dropped a protected identity token; source CV was restored instead.")
+        else:
+            tailored=tailored_masked
+        letter=str(bundle.get("cover_letter","") or "").strip()
+        cv_trace=[{"document":"cv","claim":x.get("claim",""),"evidence_ids":list(x.get("evidence_ids",[]) or [])} for x in (bundle.get("cv_claim_trace",[]) or []) if isinstance(x,dict) and x.get("claim")]
+        cover_trace=[{"document":"cover_letter","claim":x.get("claim",""),"evidence_ids":list(x.get("evidence_ids",[]) or [])} for x in (bundle.get("cover_letter_claim_trace",[]) or []) if isinstance(x,dict) and x.get("claim")]
+        metadata={"recipient":str(bundle.get("recipient","") or ""),"reference":str(bundle.get("reference","") or "")}
+
     cv_language_ok,note=_language_tailoring_ok(tailored,target_language,match.employment_type)
     if not cv_language_ok:result["notes"].append(note)
-    if ai.last_tailor_error:result["notes"].append(f"CV tailoring failed: {ai.last_tailor_error}")
+    valid_ids={str(x.get("id")) for x in audit_evidence if x.get("id")}
+    cv_ids=[];cover_ids=[]
+    for x in (bundle.get("cv_evidence_ids_used",[]) if bundle else []):
+        x=str(x)
+        if x in valid_ids and x not in cv_ids:cv_ids.append(x)
+    for row in cv_trace:
+        row["evidence_ids"]=[str(x) for x in row.get("evidence_ids",[]) if str(x) in valid_ids]
+        for x in row["evidence_ids"]:
+            if x not in cv_ids:cv_ids.append(x)
+    for x in (bundle.get("cover_letter_evidence_ids_used",[]) if bundle else []):
+        x=str(x)
+        if x in valid_ids and x not in cover_ids:cover_ids.append(x)
+    for row in cover_trace:
+        row["evidence_ids"]=[str(x) for x in row.get("evidence_ids",[]) if str(x) in valid_ids]
+        for x in row["evidence_ids"]:
+            if x not in cover_ids:cover_ids.append(x)
+    result["cv_evidence_ids"]=cv_ids;result["cover_letter_evidence_ids"]=cover_ids
 
-    valid_audit_ids={str(x.get("id")) for x in audit_evidence if x.get("id")}
-    tailor_trace=dict(ai.last_tailor_trace or {})
-    claim_trace=[]
-    for item in tailor_trace.get("claim_trace",[]) or []:
-        if not isinstance(item,dict):continue
-        claim=str(item.get("claim","")).strip()
-        if claim:claim_trace.append({"document":"cv","claim":claim,"evidence_ids":[str(x) for x in (item.get("evidence_ids",[]) or []) if str(x) in valid_audit_ids]})
-
-    letter=ai.cover_letter(job,profile,match,target_language,evidence_records=selected_evidence)
-    if ai.last_cover_error:result["notes"].append(f"Cover-letter generation failed: {ai.last_cover_error}")
-    cover_trace=[]
-    for item in ai.last_cover_trace or []:
-        if not isinstance(item,dict):continue
-        claim=str(item.get("claim","")).strip()
-        if claim:cover_trace.append({"document":"cover_letter","claim":claim,"evidence_ids":[str(x) for x in (item.get("evidence_ids",[]) or []) if str(x) in valid_audit_ids]})
-
-    audit_cfg=(cfg.get("evidence",{}).get("semantic_audit",{}) or {})
-    audit_enabled=bool(audit_cfg.get("enabled",True));audit_required=bool(audit_cfg.get("required_for_ready",True))
-
-    def apply_trace_repairs(cv_rows:list[dict], cover_rows:list[dict], audit:dict)->tuple[list[dict],list[dict]]:
-        repairs={(str(x.get("document","")),str(x.get("claim",""))):list(x.get("recommended_evidence_ids",[]) or []) for x in audit.get("trace_repairs",[]) or []}
-        out_cv=[];out_cover=[]
-        for rows,out,doc in ((cv_rows,out_cv,"cv"),(cover_rows,out_cover,"cover_letter")):
-            for row in rows:
-                item=dict(row); key=(doc,str(item.get("claim","")))
-                if key in repairs and repairs[key]:item["evidence_ids"]=[x for x in repairs[key] if x in valid_audit_ids]
-                out.append(item)
-        return out_cv,out_cover
-
-    if audit_enabled:
-        audit_result=ai.audit_claims(claim_trace+cover_trace,audit_evidence)
-        claim_trace,cover_trace=apply_trace_repairs(claim_trace,cover_trace,audit_result)
-        audit_result["trace_repair_count"]=len(audit_result.get("trace_repairs",[]) or [])
-    else:audit_result={"ok":True,"audited":0,"unsupported":[],"trace_repairs":[],"reason":"Semantic audit disabled by config."}
-
-    # One bounded content-correction pass only when truth/wording still fails. Missing
-    # or mismatched trace IDs are repaired as metadata and do not trigger a rewrite.
-    if audit_enabled and not audit_result.get("ok") and (audit_result.get("unsupported") or []):
-        result["audit_repair_attempted"]=True
-        cv_find=[x for x in audit_result.get("unsupported",[]) if x.get("document")=="cv"]
-        cover_find=[x for x in audit_result.get("unsupported",[]) if x.get("document")=="cover_letter"]
-        if cv_find:
-            remasked,reprotected=protect_identity_lines(tailored) if dcfg.get("preserve_identity_and_links_exactly",True) else (tailored,{})
-            fixed_masked,fixtrace=ai.repair_cv_document(remasked,job,target_language,cv_find,audit_evidence)
-            if reprotected:
-                fixed,okid=restore_identity_lines(fixed_masked,reprotected)
-                if okid:tailored=fixed
-            else:tailored=fixed_masked
-            if fixtrace.get("claim_trace"):
-                bad={x.get("claim") for x in cv_find}
-                claim_trace=[x for x in claim_trace if x.get("claim") not in bad]
-                claim_trace += [{"document":"cv","claim":x.get("claim",""),"evidence_ids":x.get("evidence_ids",[])} for x in fixtrace.get("claim_trace",[]) if x.get("claim")]
-        if cover_find:
-            fixed_letter,fixtrace=ai.repair_cover_letter_document(letter,job,match,target_language,cover_find,audit_evidence)
-            letter=fixed_letter
-            if fixtrace.get("claim_trace"):
-                bad={x.get("claim") for x in cover_find}
-                cover_trace=[x for x in cover_trace if x.get("claim") not in bad]
-                cover_trace += [{"document":"cover_letter","claim":x.get("claim",""),"evidence_ids":x.get("evidence_ids",[])} for x in fixtrace.get("claim_trace",[]) if x.get("claim")]
-        audit_result=ai.audit_claims(claim_trace+cover_trace,audit_evidence)
-        claim_trace,cover_trace=apply_trace_repairs(claim_trace,cover_trace,audit_result)
-        audit_result["repair_attempted"]=True
-        audit_result["trace_repair_count"]=len(audit_result.get("trace_repairs",[]) or [])
+    audit_result=_local_trace_audit(cv_trace+cover_trace,audit_evidence)
+    result["evidence_audit_ok"]=bool(audit_result.get("ok"));result["semantic_evidence_audit_ok"]=bool(audit_result.get("ok"));result["semantic_evidence_audit_count"]=int(audit_result.get("audited",0) or 0)
+    if not audit_result.get("ok"):
+        result["notes"].append(f"Deterministic evidence trace found {len(audit_result.get('unsupported',[]) or [])} ambiguous/unsupported generated claim(s); package requires review. No extra Codex audit/repair call was spent.")
 
     cvpath=pkg/f"CV_{file_tag}.tex";cvpath.write_text(tailored,encoding="utf-8")
     (pkg/f"CoverLetter_{file_tag}.txt").write_text(letter,encoding="utf-8")
+    (pkg/"cv_evidence_trace.json").write_text(json.dumps({"evidence_ids":cv_ids,"claim_trace":[{"claim":x.get("claim"),"evidence_ids":x.get("evidence_ids",[])} for x in cv_trace]},ensure_ascii=False,indent=2),encoding="utf-8")
+    (pkg/"cover_letter_evidence.json").write_text(json.dumps({"evidence_ids":cover_ids,"claim_trace":[{"claim":x.get("claim"),"evidence_ids":x.get("evidence_ids",[])} for x in cover_trace]},ensure_ascii=False,indent=2),encoding="utf-8")
+    # Compatibility filename retained; the file now states the audit method explicitly.
+    (pkg/"semantic_evidence_audit.json").write_text(json.dumps(audit_result,ensure_ascii=False,indent=2),encoding="utf-8")
+
     result["cover_letter_word_count"]=len(re.findall(r"\b\w+[\w'-]*\b",letter,flags=re.UNICODE))
     style=dcfg.get("cover_letter_style",{}) or {};preferred_min=int(style.get("preferred_min_words",400) or 400);preferred_max=int(style.get("preferred_max_words",560) or 560)
-    if result["cover_letter_word_count"]<preferred_min:
+    if bundle and result["cover_letter_word_count"]<preferred_min:
         result["notes"].append(f"Cover letter is {result['cover_letter_word_count']} words; preferred substantive range starts near {preferred_min} words when enough evidence exists.")
     elif result["cover_letter_word_count"]>preferred_max+80:
         result["notes"].append(f"Cover letter is {result['cover_letter_word_count']} words; consider shortening toward about {preferred_max} words.")
 
-    cited=[]
-    for x in (tailor_trace.get("evidence_ids_used",[]) or []):
-        x=str(x)
-        if x in valid_audit_ids and x not in cited:cited.append(x)
-    for item in claim_trace:
-        for x in item.get("evidence_ids",[]) or []:
-            if x in valid_audit_ids and x not in cited:cited.append(x)
-    cover_ids=[]
-    for x in ai.last_cover_evidence_ids or []:
-        x=str(x)
-        if x in valid_audit_ids and x not in cover_ids:cover_ids.append(x)
-    for item in cover_trace:
-        for x in item.get("evidence_ids",[]) or []:
-            if x in valid_audit_ids and x not in cover_ids:cover_ids.append(x)
-    result["cv_evidence_ids"]=cited;result["cover_letter_evidence_ids"]=cover_ids
-    (pkg/"cv_evidence_trace.json").write_text(json.dumps({"evidence_ids":cited,"claim_trace":[{"claim":x.get("claim"),"evidence_ids":x.get("evidence_ids",[])} for x in claim_trace]},ensure_ascii=False,indent=2),encoding="utf-8")
-    (pkg/"cover_letter_evidence.json").write_text(json.dumps({"evidence_ids":cover_ids,"claim_trace":[{"claim":x.get("claim"),"evidence_ids":x.get("evidence_ids",[])} for x in cover_trace]},ensure_ascii=False,indent=2),encoding="utf-8")
-
-    result["semantic_evidence_audit_ok"]=bool(audit_result.get("ok"));result["semantic_evidence_audit_count"]=int(audit_result.get("audited",0) or 0)
-    (pkg/"semantic_evidence_audit.json").write_text(json.dumps(audit_result,ensure_ascii=False,indent=2),encoding="utf-8")
-    if audit_enabled and not audit_result.get("ok"):
-        unsupported=audit_result.get("unsupported",[]) or []
-        if unsupported:result["notes"].append(f"Semantic evidence audit still has {len(unsupported)} unsupported/overstated claim(s) after trace/wording repair; package requires review.")
-        else:result["notes"].append(str(audit_result.get("reason","Semantic evidence audit did not pass.")))
-
-    metadata=dict(ai.last_cover_metadata or {})
     lpath=pkg/f"CoverLetter_{file_tag}.tex";lpath.write_text(letter_to_tex(letter,profile,job,target_language,cfg=cfg,metadata=metadata,match=match),encoding="utf-8")
-    if not ai.enabled:result["notes"].append("AI/Codex is unavailable: package is not application-ready because genuine tailoring/translation was not performed.")
     if dcfg.get("compile_pdf",True):
         ok,log=compile_latex(cvpath);result["cv_pdf"]=ok
         if not ok:
@@ -401,14 +425,11 @@ def generate_package(
             result["notes"].append("Cover-letter compiler returned a non-zero code, but the generated PDF passed artifact validation.")
 
     compile_required=bool(dcfg.get("compile_pdf",True));require_trace=bool(cfg.get("evidence",{}).get("require_traceability_for_ready",True))
-    trace_ok=bool(cited and cover_ids and claim_trace and cover_trace) if require_trace else True
-    if require_trace and not cited:result["notes"].append("CV tailoring has no valid internal evidence-ID citations; package requires review.")
-    if require_trace and not cover_ids:result["notes"].append("Cover letter has no valid evidence-ID trace; package requires review.")
-    if audit_required and not claim_trace:result["notes"].append("CV has no material claim trace for semantic auditing; package requires review.")
-    if audit_required and not cover_trace:result["notes"].append("Cover letter has no material claim trace for semantic auditing; package requires review.")
-    audit_ok=(not audit_required) or bool(result.get("semantic_evidence_audit_ok"))
-    generation_ok=bool(ai.enabled and not ai.last_tailor_error and not ai.last_cover_error and cv_language_ok and not letter.startswith("[AI/Codex") and trace_ok and audit_ok)
-    if audit_required and not audit_ok:result["notes"].append("Semantic claim-vs-evidence audit is required for READY status and did not pass.")
+    trace_ok=bool(cv_ids and cover_ids and cv_trace and cover_trace) if require_trace else True
+    if require_trace and not cv_trace:result["notes"].append("Tailored CV has no material evidence-linked claim trace; package requires review.")
+    if require_trace and not cover_trace:result["notes"].append("Cover letter has no material evidence-linked claim trace; package requires review.")
+    if not ai.enabled:result["notes"].append("AI/Codex is unavailable or budget-locked: genuine application tailoring was not performed.")
+    generation_ok=bool(bundle and ai.enabled and not ai.last_bundle_error and cv_language_ok and trace_ok and audit_result.get("ok"))
     result["ready"]=bool(generation_ok and (not compile_required or (result["cv_pdf"] and result["cover_pdf"])))
     (pkg/"package_status.json").write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8")
     return pkg,result

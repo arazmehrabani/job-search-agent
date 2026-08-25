@@ -51,6 +51,8 @@ class MatchResult:
     screen_decision: str = ""
     evaluation_stage: str = "pre"
     deep_pending: bool = False
+    analysis_input_hash: str = ""
+    analyzed_at: str = ""
 
     # Traceability
     evidence_ids: list[str] = field(default_factory=list)

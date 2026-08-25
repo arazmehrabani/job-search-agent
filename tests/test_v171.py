@@ -14,7 +14,7 @@ from src.utils import strip_html
 class V171WindowsUnicodeTests(unittest.TestCase):
     def test_codex_subprocess_uses_utf8(self):
         cfg = load_config("config.yaml")
-        cfg = {**cfg, "ai": {**cfg.get("ai", {}), "provider": "codex_cli"}}
+        cfg = {**cfg, "ai": {**cfg.get("ai", {}), "provider": "codex_cli", "budget": {**(cfg.get("ai", {}).get("budget", {}) or {}), "enabled": False, "usage_hint_file": "nonexistent-test-usage-hint.json", "manual_pause": False}}}
         ai = AIEngine(cfg)
         ai.provider = "codex_cli"
         ai.enabled = True

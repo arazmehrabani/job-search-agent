@@ -83,8 +83,13 @@ def doctor(cfg, network: bool = False):
     add("Per-run AI telemetry", True, "output/last_run_report.json")
     evidence = load_evidence_registry(cfg); add("Evidence registry", len(evidence) >= 20, f"{len(evidence)} verified evidence objects")
     ecfg = cfg.get("evidence", {}) or {}
-    add("Semantic evidence select", bool(ecfg.get("semantic_selection", {}).get("enabled", True)), "deep-match semantic second pass")
-    add("Semantic claim audit", bool(ecfg.get("semantic_audit", {}).get("enabled", True)), "required before READY" if ecfg.get("semantic_audit", {}).get("required_for_ready", True) else "enabled but optional")
+    add("AI strategy", True, str((cfg.get("ai", {}) or {}).get("strategy", {})))
+    if ai is not None:
+        bs = ai.budget_snapshot()
+        add("AI budget guard", True, f"{'LOCKED: '+bs.get('lock_reason','') if bs.get('locked') else 'OPEN'}; max {bs.get('max_calls_per_run')} calls/run")
+    add("Semantic evidence select", not bool(ecfg.get("semantic_selection", {}).get("enabled", False)), "OFF by default in V1.9; lexical/tagged evidence retrieval is local")
+    add("Automatic semantic audit", not bool(ecfg.get("semantic_audit", {}).get("enabled", False)), "OFF by default in V1.9; deterministic evidence trace gate is local")
+    add("Local trace audit", bool(ecfg.get("local_trace_audit", {}).get("enabled", True)), "required for READY without an extra Codex call")
     hcfg = cfg.get("http", {}) or {}
     add("HTTP host throttling", float(hcfg.get("min_delay_per_host_seconds", 0) or 0) > 0, f"{hcfg.get('min_delay_per_host_seconds', 0)}s minimum per host")
     add("robots.txt policy", bool(hcfg.get("respect_robots_txt", True)), f"fail_open={bool(hcfg.get('robots_fail_open', True))}")
@@ -111,7 +116,7 @@ def doctor(cfg, network: bool = False):
             add("Internet connectivity", r.status_code < 500, f"HTTP {r.status_code}")
         except Exception as exc: add("Internet connectivity", False, exc)
 
-    print("\nJob Search Agent V1.8.3 — doctor\n")
+    print("\nJob Search Agent V1.9.0 — doctor\n")
     for name, ok, note in checks:
         print(f"{'OK ' if ok else '---'} {name:22} {note}")
     optional_names = {"OPENAI_API_KEY", "ADZUNA keys", "JOOBLE_API_KEY", "Git", "pdfinfo", "Codex CLI"}
@@ -120,11 +125,12 @@ def doctor(cfg, network: bool = False):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Personal Job Search Agent V1.8.3")
+    ap = argparse.ArgumentParser(description="Personal Job Search Agent V1.9.0")
     ap.add_argument("--config", default="config.yaml")
     sub = ap.add_subparsers(dest="command", required=True)
-    r = sub.add_parser("run", help="Search, verify, rank and prepare application packages")
-    r.add_argument("--dry-run", action="store_true", help="Do not generate application documents")
+    r = sub.add_parser("run", help="Safe default: search + local ranking only. Add --full for resource-governed Codex/application generation")
+    r.add_argument("--full", action="store_true", help="Explicitly enable resource-governed Codex DEEP reviews and NEW application packages")
+    r.add_argument("--dry-run", action="store_true", help="Deprecated alias for the default ZERO-Codex local preview")
     sub.add_parser("dashboard", help="Generate output/dashboard.html")
     d = sub.add_parser("digest", help="Generate output/daily_digest.html")
     d.add_argument("--min-priority", type=int, default=None)
@@ -148,7 +154,7 @@ def main():
     if args.command == "doctor":
         doctor(cfg, network=args.network); return
     if args.command == "sources":
-        print("\nJob Search Agent V1.8.3 — source status\n")
+        print("\nJob Search Agent V1.9.0 — source status\n")
         broad = 0
         live_ok = 0
         for src in build_sources(cfg):
@@ -172,7 +178,8 @@ def main():
     db = Database(db_path())
     try:
         if args.command == "run":
-            result = run_pipeline(cfg, db, dry_run=args.dry_run)
+            # Safety default is local preview. Provider work requires the explicit --full flag.
+            result = run_pipeline(cfg, db, dry_run=not bool(getattr(args, "full", False)))
             print(json.dumps(result, ensure_ascii=False, indent=2))
             p = build_dashboard(db, cfg=cfg); print(f"Dashboard: {p}")
             minp = int(cfg.get("notifications", {}).get("digest_priority_min", 68))

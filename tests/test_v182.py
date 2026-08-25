@@ -97,11 +97,14 @@ class V182Tests(unittest.TestCase):
     def _cfg(self):
         cfg = load_config(str(PROJECT_ROOT / "config.yaml"))
         cfg["search"]["verify_live_page"] = False
-        cfg["ai"]["tiered"]["max_screen_per_run"] = 3
-        cfg["ai"]["tiered"]["max_deep_per_run"] = 1
-        cfg["ai"]["tiered"]["screen_min_pre_score"] = 0
-        cfg["ai"]["tiered"]["deep_min_screen_score"] = 0
-        cfg["ai"]["tiered"]["deep_force_pre_score"] = 0
+        # V1.9 no longer uses the legacy SCREEN tier. Tests keep the direct-DEEP
+        # budget deliberately tiny so allocation/retry behavior is deterministic.
+        cfg["ai"]["strategy"]["max_new_deep_per_run"] = 1
+        cfg["ai"]["strategy"]["deep_min_pre_score"] = 0
+        cfg["ai"]["strategy"]["deep_min_local_priority"] = 0
+        cfg["ai"]["strategy"]["reserve_calls_for_new_packages"] = 0
+        cfg["ai"]["strategy"]["max_new_packages_per_run"] = 1
+        cfg["ai"]["strategy"]["skip_deep_if_german_c1_gap"] = False
         cfg["priority"]["package_generation_min"] = 74
         cfg["notifications"]["immediate_priority_min"] = 82
         return cfg
@@ -129,14 +132,17 @@ class V182Tests(unittest.TestCase):
                 cfg["documents"]["profile"] = str(root / "input/profile.json")
                 cfg["search"]["career_scope_file"] = str(root / "input/career_scope.yaml")
                 cfg["evidence"]["registry"] = str(root / "input/evidence/evidence.json")
+                cfg["priority"]["package_generation_min"] = 101
                 db = Database("output/test.db")
+                scores = lambda job, profile, cfg_: {"Mechanical Engineer Alpha": 65, "Mechanical Engineer Beta": 75, "Mechanical Engineer Gamma": 85}[job.title]
                 with patch("src.pipeline.build_sources", return_value=[_FakeSource(self._jobs())]), \
-                     patch("src.pipeline.AIEngine", _FakeAI):
-                    result = run_pipeline(cfg, db, dry_run=True)
+                     patch("src.pipeline.AIEngine", _FakeAI), patch("src.pipeline.heuristic_score", side_effect=scores):
+                    result = run_pipeline(cfg, db, dry_run=False)
                 rows = {r["title"]: r for r in db.top_jobs(20)}
+                self.assertEqual(result["ai_screened"], 0)
                 self.assertEqual(result["deep_ai_evaluated"], 1)
                 self.assertEqual(json.loads(rows["Mechanical Engineer Gamma"]["match_json"])["evaluation_stage"], "deep")
-                self.assertEqual(json.loads(rows["Mechanical Engineer Alpha"]["match_json"])["evaluation_stage"], "screen")
+                self.assertEqual(json.loads(rows["Mechanical Engineer Alpha"]["match_json"])["evaluation_stage"], "pre")
                 self.assertTrue(json.loads(rows["Mechanical Engineer Alpha"]["match_json"])["deep_pending"])
                 db.close()
             finally:
@@ -151,13 +157,15 @@ class V182Tests(unittest.TestCase):
                 cfg["documents"]["profile"] = str(root / "input/profile.json")
                 cfg["search"]["career_scope_file"] = str(root / "input/career_scope.yaml")
                 cfg["evidence"]["registry"] = str(root / "input/evidence/evidence.json")
+                cfg["priority"]["package_generation_min"] = 101
                 db = Database("output/test.db")
-                with patch("src.pipeline.build_sources", return_value=[_FakeSource(self._jobs())]), patch("src.pipeline.AIEngine", _FakeAI):
-                    first = run_pipeline(cfg, db, dry_run=True)
-                    second = run_pipeline(cfg, db, dry_run=True)
+                scores = lambda job, profile, cfg_: {"Mechanical Engineer Alpha": 65, "Mechanical Engineer Beta": 75, "Mechanical Engineer Gamma": 85}[job.title]
+                with patch("src.pipeline.build_sources", return_value=[_FakeSource(self._jobs())]), patch("src.pipeline.AIEngine", _FakeAI), patch("src.pipeline.heuristic_score", side_effect=scores):
+                    first = run_pipeline(cfg, db, dry_run=False)
+                    second = run_pipeline(cfg, db, dry_run=False)
                 rows = {r["title"]: json.loads(r["match_json"]) for r in db.top_jobs(20)}
-                self.assertEqual(first["ai_screened"], 3)
-                # On run two, Gamma is cached deep; Beta's prior screen wins the one deep slot.
+                self.assertEqual(first["ai_screened"], 0)
+                # On run two, Gamma is cached deep; Beta wins the one new direct-DEEP slot.
                 self.assertEqual(rows["Mechanical Engineer Beta"]["evaluation_stage"], "deep")
                 self.assertEqual(second["ai_screened"], 0)
                 self.assertEqual(second["deep_ai_evaluated"], 1)
@@ -177,9 +185,11 @@ class V182Tests(unittest.TestCase):
                 with patch("src.pipeline.build_sources", return_value=[_FakeSource(self._jobs())]), \
                      patch("src.pipeline.AIEngine", _FakeAI):
                     result = run_pipeline(cfg, db, dry_run=True)
-                self.assertEqual(result["execution_mode"], "MATCH_ONLY")
+                self.assertEqual(result["execution_mode"], "LOCAL_PREVIEW")
                 self.assertEqual(result["ready_packages"], 0)
-                self.assertGreaterEqual(result["packages_would_generate"], 1)
+                self.assertEqual(result["deep_ai_evaluated"], 0)
+                self.assertEqual(result["ai_screened"], 0)
+                self.assertEqual(result["usage_this_run"]["calls"], 0)
                 self.assertFalse(Path("output/applications").exists())
                 report = json.loads(Path("output/last_run_report.json").read_text(encoding="utf-8"))
                 self.assertFalse(report["document_generation_enabled"])

@@ -35,7 +35,7 @@ class ArbeitsagenturSource(JobSource):
         self.cfg = cfg or {}
         self.timeout = int(self.cfg.get("timeout_seconds", 25) or 25)
         self.max_queries = max(1, int(self.cfg.get("max_queries_per_run", 12) or 12))
-        self.user_agent = str(self.cfg.get("user_agent") or "JobSearchAgent/1.8.3")
+        self.user_agent = str(self.cfg.get("user_agent") or "JobSearchAgent/1.9.0")
         self.min_delay = float(self.cfg.get("min_delay_seconds", 1.5) or 0.0)
         self.jitter = float(self.cfg.get("delay_jitter_seconds", 0.25) or 0.0)
         self.respect_robots = bool(self.cfg.get("respect_robots_txt", True))

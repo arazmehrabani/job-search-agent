@@ -12,6 +12,7 @@ from .models import Job, MatchResult
 from .utils import extract_json
 from .filters import heuristic_score
 from .evidence import evidence_payload
+from .ai_budget import AIBudgetGuard, AIBudgetExceeded
 
 
 def find_codex_executable(configured: str = "") -> str:
@@ -70,6 +71,9 @@ class AIEngine:
         self.last_cover_evidence_ids: list[str] = []
         self.last_cover_trace: list[dict] = []
         self.last_cover_metadata: dict = {}
+        self.last_bundle_error = ""
+        self.last_bundle_trace: dict = {}
+        self.budget = AIBudgetGuard(cfg)
 
         api_available = bool(os.getenv("OPENAI_API_KEY"))
         codex_available = bool(self.codex_executable)
@@ -86,13 +90,25 @@ class AIEngine:
             # Safe auto: Codex first, otherwise heuristic. Never spend API credits silently.
             self.provider = "codex_cli" if codex_available else "heuristic"
 
-        self.enabled = self.provider in ("openai_api", "codex_cli")
+        self.enabled = self.provider in ("openai_api", "codex_cli") and not self.budget.locked
         if self.provider == "openai_api":
             from openai import OpenAI
             self.client = OpenAI()
 
     def backend_name(self) -> str:
+        if self.provider in ("openai_api", "codex_cli") and self.budget.locked:
+            return f"{self.provider}_budget_locked"
         return self.provider
+
+    def budget_snapshot(self) -> dict:
+        return self.budget.snapshot()
+
+    def budget_remaining_calls(self) -> int:
+        return self.budget.remaining_calls()
+
+    def force_budget_lock(self, reason: str) -> None:
+        self.budget.force_lock(reason)
+        self.enabled = False
 
     def _record_usage(self, **event):
         if not self.usage_recorder:
@@ -109,10 +125,13 @@ class AIEngine:
         output_tokens = 0
         cost = None
         success = False
+        provider_attempted = False
         note = ""
         text = ""
         model_name = self.model if self.provider == "openai_api" else (self.codex_model or "chatgpt-codex")
         try:
+            self.budget.reserve(operation, input_tokens)
+            provider_attempted = True
             if self.provider == "openai_api":
                 resp = self.client.responses.create(
                     model=self.model,
@@ -169,21 +188,24 @@ class AIEngine:
             note = str(exc)[:1000]
             raise
         finally:
+            if provider_attempted:
+                self.budget.record_result(success)
             duration_ms = int((time.perf_counter() - started) * 1000)
-            self._record_usage(
-                timestamp=datetime.now(timezone.utc).isoformat(),
-                provider=self.provider,
-                model=model_name,
-                operation=operation,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                input_chars=len(instructions + payload_text),
-                output_chars=len(text or ""),
-                estimated_cost_usd=cost,
-                duration_ms=duration_ms,
-                success=success,
-                note=note,
-            )
+            if provider_attempted:
+                self._record_usage(
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    provider=self.provider,
+                    model=model_name,
+                    operation=operation,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    input_chars=len(instructions + payload_text),
+                    output_chars=len(text or ""),
+                    estimated_cost_usd=cost,
+                    duration_ms=duration_ms,
+                    success=success,
+                    note=note,
+                )
 
     def heuristic_match(self, job: Job, profile: dict, context: dict, evidence_ids: list[str] | None = None) -> MatchResult:
         base = heuristic_score(job, profile, self.cfg)
@@ -195,7 +217,7 @@ class AIEngine:
             decision_reasons=["Local capability-based pre-score; no deep AI assessment yet."],
             reasoning="Local capability-based heuristic. AI/Codex matching was unavailable or skipped.",
             source="heuristic",
-            analysis_version="1.8.2",
+            analysis_version="1.9.0",
             evaluation_stage="pre",
             deep_pending=False,
             transferability="Local score includes transferable engineering capability and career-family signals.",
@@ -575,7 +597,7 @@ Also provide a semantic second opinion on career family and German-language impo
             transferability=str(data.get("transferability", "")),
             reasoning=str(data.get("reasoning", "")),
             source=self.provider,
-            analysis_version="1.8.2",
+            analysis_version="1.9.0",
             evaluation_stage="deep",
             deep_pending=False,
             screen_score=int((screen_data or {}).get("screen_score", 0) or 0),
@@ -604,7 +626,7 @@ Also provide a semantic second opinion on career family and German-language impo
             missing_required=list(screen.get("mandatory_gaps", []) or []),
             reasoning=str(screen.get("reason", "Compact AI screen; deep evaluation not promoted.")),
             source="ai_screen",
-            analysis_version="1.8.2",
+            analysis_version="1.9.0",
             evaluation_stage="screen",
             deep_pending=False,
             screen_score=screen_score,
@@ -639,6 +661,120 @@ Generate a useful mix of English and German job-board queries. Do not suggest cl
             return out
         except Exception:
             return []
+
+    def application_bundle(
+        self,
+        master_tex: str,
+        job: Job,
+        profile: dict,
+        match: MatchResult,
+        target_language: str,
+        employment_type: str,
+        career_family_label: str,
+        source_cv_key: str,
+        evidence_records: list[dict] | None = None,
+    ) -> dict:
+        """Create the tailored CV and cover-letter content in one provider call.
+
+        V1.9 uses this instead of separate CV + cover-letter calls. Every material
+        generated/reworded claim must carry direct verified evidence IDs.
+        """
+        self.last_bundle_error = ""
+        self.last_bundle_trace = {}
+        if not self.enabled:
+            self.last_bundle_error = "AI/Codex backend unavailable or locally budget-locked"
+            return {}
+        language_name = "German" if target_language == "de" else "English"
+        instructions = f"""You are preparing ONE evidence-grounded engineering application package.
+Return JSON only with these keys:
+- cv_latex: complete compilable LaTeX CV
+- cv_evidence_ids_used: list of VERIFIED evidence IDs
+- cv_claim_trace: list of {{"claim":"material generated/reworded CV claim","evidence_ids":["ID"]}}
+- cover_letter: complete cover-letter text including salutation and professional sign-off
+- cover_letter_evidence_ids_used: list of VERIFIED evidence IDs
+- cover_letter_claim_trace: list of {{"claim":"material cover-letter factual claim","evidence_ids":["ID"]}}
+- recipient: named contact/team only when supported, otherwise neutral recruiting label
+- reference: vacancy/reference ID only when supported, otherwise empty string
+
+TARGET LANGUAGE: {language_name}.
+TARGET EMPLOYMENT TYPE: {employment_type}.
+CAREER FAMILY: {career_family_label}.
+SOURCE CV: {source_cv_key}.
+
+TRUTH BOUNDARY:
+1. VERIFIED EVIDENCE OBJECTS are the factual boundary. Never invent or upgrade skills, employers, dates, responsibilities, results, education, standards, certifications, domain experience or language levels.
+2. Every material factual claim you introduce or materially reword MUST cite at least one direct VERIFIED evidence ID. Do not cite an ID that does not support the exact wording/strength.
+3. German remains B1/actively learning unless the evidence says otherwise. Never imply a stronger level.
+4. Preserve every protected identity token in the source CV EXACTLY. Never restore or guess redacted identity data.
+5. Do not claim missing vacancy requirements. It is acceptable to acknowledge a gap or describe a transferable foundation.
+6. Keep the CV concise, normally <=2 A4 pages. Preserve its LaTeX design and useful commands. Prefer the most relevant 2-3 bullets per professional role and only relevant projects.
+7. Do not turn a professional full-time application into a thesis application because the candidate is currently studying.
+
+COVER-LETTER STYLE:
+- Follow the supplied preferred professional engineering style: substantive one-page letter, normally ~400-560 words when enough evidence exists, without padding.
+- Paragraph 1: specific role/company motivation and strongest overall fit.
+- Paragraphs 2-3: strongest professional engineering examples tied directly to vacancy duties.
+- Add one academic/research/project paragraph only if it strengthens this vacancy.
+- Where useful, acknowledge a genuine tool/domain/language gap and explain transferable capability without pretending prior experience.
+- Final paragraph: specific contribution and professional closing.
+- Do not merely restate the CV; build an evidence-to-role argument.
+
+The MATCH ANALYSIS may guide emphasis, but it is NOT factual evidence by itself. Facts must come from VERIFIED EVIDENCE OBJECTS or unchanged source-CV content that is itself represented by those evidence objects."""
+        evidence = evidence_payload(evidence_records or [])
+        payload = {
+            "candidate_profile": profile,
+            "job": {
+                "title": job.title,
+                "company": job.company,
+                "location": job.location,
+                "description": (job.description or "")[:12000],
+            },
+            "match_analysis": match.to_dict(),
+            "source_cv_latex_with_protected_identity_tokens": master_tex,
+            "verified_evidence_objects": evidence,
+        }
+        try:
+            data = extract_json(self._text_call(instructions, payload, operation="application_bundle"))
+        except Exception as exc:
+            self.last_bundle_error = str(exc)
+            return {}
+        if not isinstance(data, dict) or not data.get("cv_latex") or not data.get("cover_letter"):
+            self.last_bundle_error = "AI bundle response did not contain both cv_latex and cover_letter"
+            return {}
+        valid = {str(e.get("id")) for e in evidence_records or [] if e.get("id")}
+
+        def clean_trace(rows):
+            out = []
+            for item in rows or []:
+                if not isinstance(item, dict):
+                    continue
+                claim = str(item.get("claim", "")).strip()
+                ids = []
+                for x in item.get("evidence_ids", []) or []:
+                    x = str(x)
+                    if x in valid and x not in ids:
+                        ids.append(x)
+                if claim:
+                    out.append({"claim": claim, "evidence_ids": ids})
+            return out
+
+        cv_trace = clean_trace(data.get("cv_claim_trace", []))
+        cover_trace = clean_trace(data.get("cover_letter_claim_trace", []))
+        cv_ids = [str(x) for x in (data.get("cv_evidence_ids_used", []) or []) if str(x) in valid]
+        cover_ids = [str(x) for x in (data.get("cover_letter_evidence_ids_used", []) or []) if str(x) in valid]
+        self.last_bundle_trace = {
+            "cv_claim_trace": cv_trace,
+            "cover_letter_claim_trace": cover_trace,
+            "cv_evidence_ids_used": list(dict.fromkeys(cv_ids)),
+            "cover_letter_evidence_ids_used": list(dict.fromkeys(cover_ids)),
+        }
+        return {
+            "cv_latex": str(data.get("cv_latex", "")),
+            "cover_letter": str(data.get("cover_letter", "")).strip(),
+            "recipient": str(data.get("recipient", "")).strip(),
+            "reference": str(data.get("reference", "")).strip(),
+            **self.last_bundle_trace,
+        }
 
     def tailor_cv(
         self,

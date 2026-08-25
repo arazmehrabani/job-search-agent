@@ -27,6 +27,10 @@ CREATE TABLE IF NOT EXISTS ai_usage (
  input_tokens INTEGER, output_tokens INTEGER, input_chars INTEGER, output_chars INTEGER,
  duration_seconds REAL, success INTEGER, error TEXT DEFAULT '', estimated_cost_usd REAL);
 CREATE INDEX IF NOT EXISTS idx_ai_usage_time ON ai_usage(timestamp);
+CREATE TABLE IF NOT EXISTS notifications (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, job_fingerprint TEXT, kind TEXT, created_at TEXT,
+ UNIQUE(job_fingerprint, kind));
+CREATE INDEX IF NOT EXISTS idx_notifications_job ON notifications(job_fingerprint);
 '''
 
 
@@ -69,6 +73,7 @@ class Database:
                             self.conn.execute('UPDATE jobs SET fingerprint=? WHERE fingerprint=?', (fp, old))
                             self.conn.execute('UPDATE applications SET job_fingerprint=? WHERE job_fingerprint=?', (fp, old))
                             self.conn.execute('UPDATE user_feedback SET job_fingerprint=? WHERE job_fingerprint=?', (fp, old))
+                            self.conn.execute('UPDATE OR IGNORE notifications SET job_fingerprint=? WHERE job_fingerprint=?', (fp, old))
                             self.conn.commit()
                         except sqlite3.IntegrityError:
                             pass
@@ -154,12 +159,27 @@ class Database:
         self.conn.execute('UPDATE jobs SET active_status=? WHERE fingerprint=?', (status, fp))
         self.conn.commit()
 
+    def set_status(self, fp, status):
+        self.conn.execute('UPDATE jobs SET status=? WHERE fingerprint=?', (str(status), str(fp)))
+        self.conn.commit()
+
     def set_match(self, fp, match: MatchResult):
         self.conn.execute(
             'UPDATE jobs SET match_score=?,priority_score=?,priority_label=?,match_json=? WHERE fingerprint=?',
             (match.score, match.priority_score, match.priority_label, json.dumps(match.to_dict(), ensure_ascii=False), fp)
         )
         self.conn.commit()
+
+    def application_rows(self):
+        return self.conn.execute(
+            """SELECT a.job_fingerprint,a.status,a.package_dir,a.created_at,a.updated_at,
+                      j.title,j.company,j.url,j.priority_score,j.match_score
+               FROM applications a LEFT JOIN jobs j ON j.fingerprint=a.job_fingerprint
+               ORDER BY a.updated_at DESC"""
+        ).fetchall()
+
+    def application_count(self) -> int:
+        return int(self.conn.execute('SELECT COUNT(*) FROM applications').fetchone()[0])
 
     def record_application(self, fp, package_dir, status='package_ready'):
         now = datetime.now(timezone.utc).isoformat()
@@ -169,6 +189,17 @@ class Database:
             (fp, status, package_dir, now, now)
         )
         self.conn.execute('UPDATE jobs SET status=? WHERE fingerprint=?', (status, fp))
+        self.conn.commit()
+
+
+    def notification_sent(self, fp: str, kind: str) -> bool:
+        return bool(self.conn.execute('SELECT 1 FROM notifications WHERE job_fingerprint=? AND kind=? LIMIT 1', (str(fp), str(kind))).fetchone())
+
+    def record_notification(self, fp: str, kind: str):
+        self.conn.execute(
+            'INSERT OR IGNORE INTO notifications(job_fingerprint,kind,created_at) VALUES(?,?,?)',
+            (str(fp), str(kind), datetime.now(timezone.utc).isoformat())
+        )
         self.conn.commit()
 
     def record_feedback(self, fp, decision, reason='', career_family=''):
@@ -266,6 +297,16 @@ class Database:
         if 'duration_seconds' in event and 'duration_ms' not in event:
             event['duration_ms'] = float(event.get('duration_seconds') or 0) * 1000.0
         self.record_usage(event)
+
+    def usage_since(self, since_iso: str):
+        row = self.conn.execute(
+            """SELECT COUNT(*) calls,COALESCE(SUM(input_tokens),0) input_tokens,
+               COALESCE(SUM(output_tokens),0) output_tokens,
+               COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END),0) successful_calls,
+               COALESCE(SUM(estimated_cost_usd),0) estimated_cost_usd
+               FROM ai_usage WHERE timestamp>=?""", (str(since_iso),)
+        ).fetchone()
+        return dict(row)
 
     def usage_stats(self, days: int | None = None):
         where, params = '', ()

@@ -1,6 +1,8 @@
 from __future__ import annotations
 import json
 import time
+import hashlib
+import copy
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -68,6 +70,87 @@ def _match_from_json(raw: str | None) -> MatchResult | None:
         return MatchResult(**allowed)
     except Exception:
         return None
+
+
+def _analysis_input_hash(job: Job) -> str:
+    payload = "\n".join([
+        str(job.title or "").strip(),
+        str(job.company or "").strip(),
+        str(job.location or "").strip(),
+        " ".join(str(job.description or "").split()),
+    ])
+    return hashlib.sha256(payload.encode("utf-8", errors="replace")).hexdigest()[:24]
+
+
+def _notify_once(db: Database, fp: str, kind: str, title: str, message: str, desktop: bool) -> bool:
+    if db.notification_sent(fp, kind):
+        return False
+    if notify(title, message, desktop):
+        db.record_notification(fp, kind)
+        return True
+    return False
+
+
+def _ai_remaining_calls(ai) -> int:
+    fn = getattr(ai, "budget_remaining_calls", None)
+    if callable(fn):
+        try:
+            return int(fn())
+        except Exception:
+            return 0
+    return 10**9 if getattr(ai, "enabled", False) else 0
+
+
+def _ai_budget_snapshot(ai) -> dict:
+    fn = getattr(ai, "budget_snapshot", None)
+    if callable(fn):
+        try:
+            return dict(fn() or {})
+        except Exception:
+            return {}
+    return {"locked": not bool(getattr(ai, "enabled", False)), "remaining_calls": _ai_remaining_calls(ai), "compatibility_stub": True}
+
+
+def _apply_rolling_ai_budget(cfg: dict, db: Database, ai: AIEngine) -> dict:
+    """Secondary DB-backed usage guard/report.
+
+    The AIEngine also owns a cross-project ledger, which is the stronger protection.
+    This DB guard counts *all provider attempts* (not only successes) and aligns its
+    longer window with the manually recorded allowance-period start when available.
+    """
+    bcfg = (cfg.get("ai", {}) or {}).get("budget", {}) or {}
+    now = datetime.now(timezone.utc)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+
+    period_start = ""
+    try:
+        hint_path = Path(str(bcfg.get("usage_hint_file", "input/codex_usage_hint.json") or "input/codex_usage_hint.json")).expanduser()
+        if hint_path.exists():
+            hint = json.loads(hint_path.read_text(encoding="utf-8"))
+            raw = str(hint.get("period_started_on", "") or "").strip()
+            if raw:
+                period_start = datetime.fromisoformat(raw + "T00:00:00+00:00").isoformat()
+    except Exception:
+        period_start = ""
+    if not period_start:
+        period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+
+    day = db.usage_since(day_start)
+    period = db.usage_since(period_start)
+    max_day = max(0, int(bcfg.get("max_provider_calls_per_day", bcfg.get("max_successful_calls_per_day", 4)) or 0))
+    max_period = max(0, int(bcfg.get("max_provider_calls_per_allowance_period", bcfg.get("max_successful_calls_per_calendar_month", 12)) or 0))
+    if ai.enabled and max_day and int(day.get("calls", 0) or 0) >= max_day:
+        if hasattr(ai, "force_budget_lock"):
+            ai.force_budget_lock(f"Project DB daily provider-call ceiling reached ({day.get('calls',0)}/{max_day} attempts today).")
+    if ai.enabled and max_period and int(period.get("calls", 0) or 0) >= max_period:
+        if hasattr(ai, "force_budget_lock"):
+            ai.force_budget_lock(f"Project DB allowance-period provider-call ceiling reached ({period.get('calls',0)}/{max_period} attempts).")
+    return {
+        "daily": day, "allowance_period": period, "allowance_period_started_at": period_start,
+        "max_provider_calls_per_day": max_day,
+        "max_provider_calls_per_allowance_period": max_period,
+        "note": "Counts provider attempts, including failures; cross-project ledger in AIEngine is the primary guard.",
+    }
 
 
 def _evaluate_job(job, profile, context, cfg, ai, registry, screen_count: int, deep_count: int):
@@ -173,6 +256,32 @@ def _write_discovery_report(report: dict, path: str = "output/discovery_report.j
     p.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _write_application_index(db: Database, path: str = "output/application_index.json") -> dict:
+    rows = []
+    companies = set()
+    missing_artifacts = 0
+    for r in db.application_rows():
+        company = str(r["company"] or "")
+        if company: companies.add(company)
+        package_dir = str(r["package_dir"] or "")
+        artifact_exists = bool(package_dir and Path(package_dir).exists())
+        if not artifact_exists:
+            missing_artifacts += 1
+        rows.append({
+            "fingerprint": str(r["job_fingerprint"] or ""),
+            "title": str(r["title"] or ""),
+            "company": company,
+            "status": str(r["status"] or ""),
+            "package_dir": package_dir,
+            "artifact_exists": artifact_exists,
+            "fit": r["match_score"], "priority": r["priority_score"],
+            "url": str(r["url"] or ""), "created_at": str(r["created_at"] or ""), "updated_at": str(r["updated_at"] or ""),
+        })
+    obj = {"application_jobs": len(rows), "companies": len(companies), "missing_artifact_packages": missing_artifacts, "packages": rows}
+    p=Path(path);p.parent.mkdir(parents=True,exist_ok=True);p.write_text(json.dumps(obj,ensure_ascii=False,indent=2),encoding="utf-8")
+    return obj
+
+
 def _usage_delta(before: dict, after: dict) -> dict:
     keys = ("calls", "input_tokens", "output_tokens", "successful_calls", "estimated_cost_usd")
     out = {}
@@ -207,11 +316,21 @@ def _write_last_run_report(report: dict, path: str = "output/last_run_report.jso
 
 
 def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
+    # DRY RUN now means genuinely local/no-Codex. It is a safety preview, not an
+    # expensive matching run with documents suppressed.
+    if dry_run:
+        cfg = copy.deepcopy(cfg)
+        cfg.setdefault("ai", {}).setdefault("budget", {})["manual_pause"] = True
     run_started = time.perf_counter()
     stage_marks = {}
     profile = load_profile(cfg.get("documents", {}).get("profile", "input/profile.json"))
     db.configure_telemetry(cfg)
     ai = AIEngine(cfg, usage_recorder=db.record_usage)
+    if dry_run:
+        # Safety invariant: LOCAL_PREVIEW is zero-provider even if a future/fake AIEngine
+        # ignores the budget.manual_pause configuration.
+        ai.enabled = False
+    rolling_budget = _apply_rolling_ai_budget(cfg, db, ai)
     sources = build_sources(cfg)
     queries = build_search_queries(cfg, profile, ai)
     locations = cfg.get("search", {}).get("locations", []) or [""]
@@ -221,6 +340,7 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
     min_score = int(cfg.get("preferences", {}).get("minimum_match_score", 63))
     package_priority = int(cfg.get("priority", {}).get("package_generation_min", 74))
     immediate_priority = int(cfg.get("notifications", {}).get("immediate_priority_min", 82))
+    local_pre_notify = int(cfg.get("notifications", {}).get("local_candidate_pre_min", 76) or 76)
     desktop = bool(cfg.get("notifications", {}).get("desktop", True))
     scope = load_career_scope(cfg.get("search", {}).get("career_scope_file", "input/career_scope.yaml"))
     registry = load_evidence_registry(cfg)
@@ -261,7 +381,7 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
     broad_success = [x for x in source_reports if x.get("category") == "broad" and x.get("automatic") and x.get("success")]
     auto_discovery_active = bool(broad_success)
     discovery_report = {
-        "version": "1.8.3",
+        "version": "1.9.0",
         "automatic_discovery_active": auto_discovery_active,
         "planned_queries": len(queries),
         "sources": source_reports,
@@ -288,6 +408,24 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
     post_enrichment_rejected = 0
     freshness_filtered = 0
     limits = freshness_limits(cfg)
+    detail_cfg = (cfg.get("http", {}) or {}).get("detail_enrichment", {}) or {}
+    detail_soft_max = max(0, int(detail_cfg.get("max_network_detail_checks_per_run", 45) or 0))
+    detail_hard_max = max(detail_soft_max, int(detail_cfg.get("hard_max_with_strong_titles", 60) or 0))
+    full_desc_chars = max(0, int(detail_cfg.get("skip_fresh_if_description_chars_at_least", 500) or 0))
+    detail_checks_used = 0
+    detail_deferred = 0
+    detail_skipped_full_description = 0
+
+    # Put strong target titles first before spending detail-page requests. The same-host
+    # throttle remains untouched; V1.9 saves time by making fewer requests, not faster ones.
+    def _cheap_enrichment_rank(j):
+        gate = title_relevance_gate(j, cfg)
+        strength = {"strong":3,"medium":2,"weak":1}.get(str(gate.title_strength),0)
+        bucket0 = freshness_bucket(j, cfg)
+        fresh = {"fresh":5,"recent":4,"unknown":3,"active_grace":2,"strong_title_grace":1}.get(bucket0,0)
+        return (1 if j.source=="manual" else 0, strength, fresh)
+    unique.sort(key=_cheap_enrichment_rank, reverse=True)
+
     for job in unique:
         # Cheap domain rejection comes first, even for old jobs. There is no reason to
         # spend a detail-page request on an obviously unrelated backend/sales/HR role.
@@ -331,7 +469,22 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
                 continue
 
         if verify:
-            active, job = page_checker.check_and_enrich(job)
+            has_full_discovery_text = len((job.description or "").strip()) >= full_desc_chars > 0
+            can_skip_fresh_detail = has_full_discovery_text and bucket in {"fresh", "recent", "unknown"} and job.source != "manual"
+            if can_skip_fresh_detail:
+                active = "unknown"
+                detail_skipped_full_description += 1
+            else:
+                strong_or_manual = title_gate.title_strength == "strong" or job.source == "manual"
+                cap = detail_hard_max if strong_or_manual else detail_soft_max
+                if detail_checks_used >= cap:
+                    fp = db.upsert_job(job)
+                    db.set_active(fp, "unknown")
+                    db.set_status(fp, "discovered_unenriched")
+                    detail_deferred += 1
+                    continue
+                active, job = page_checker.check_and_enrich(job)
+                detail_checks_used += 1
         else:
             active = "unknown"
 
@@ -408,172 +561,174 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
         "post_enrichment_rejected": post_enrichment_rejected,
         "freshness_filtered": freshness_filtered,
         "eligible_after_relevance_filters": len(candidates),
+        "detail_page_checks_used": detail_checks_used,
+        "detail_enrichment_deferred": detail_deferred,
+        "detail_checks_skipped_full_description": detail_skipped_full_description,
     })
     _write_discovery_report(discovery_report)
     stage_marks["enrichment_filtering_seconds"] = round(time.perf_counter() - run_started - stage_marks.get("discovery_seconds", 0.0), 3)
 
+    # V1.9 execution policy: local ranking first, no routine AI screen, no routine
+    # semantic evidence-selection call. Codex is reserved for a small number of direct
+    # deep evaluations and for NEW application packages only.
     screened = 0
     deep_evaluated = 0
     evaluated = 0
     strong, packages, not_ready = [], [], []
     package_errors = []
     would_generate = []
+    queued_packages = []
     notifications_sent = 0
+    existing_packages_skipped = 0
 
-    # Phase 2a: run compact screening first for the whole eligible queue (within the
-    # configured screen budget). Deep slots are NOT consumed here. This prevents an
-    # early source result from taking a deep-analysis slot before a stronger job later
-    # in the same run has even been screened.
-    tiered = cfg.get("ai", {}).get("tiered", {}) or {}
-    tiered_enabled = bool(tiered.get("enabled", True))
-    screen_min = int(tiered.get("screen_min_pre_score", 40))
-    max_screen = int(tiered.get("max_screen_per_run", 24))
-    max_deep = int(tiered.get("max_deep_per_run", 10))
-    deep_min = int(tiered.get("deep_min_screen_score", 58))
-    force_pre = int(tiered.get("deep_force_pre_score", 72))
-    force_manual_cfg = bool(tiered.get("manual_force_screen", True))
-    screen_limit = int(tiered.get("screen_evidence_limit", 8))
-    deep_limit = int(tiered.get("deep_evidence_limit", 16))
+    strategy = cfg.get("ai", {}).get("strategy", {}) or {}
+    max_new_deep = max(0, int(strategy.get("max_new_deep_per_run", 2) or 0))
+    deep_min_pre = int(strategy.get("deep_min_pre_score", 63) or 63)
+    deep_min_local_priority = int(strategy.get("deep_min_local_priority", 68) or 68)
+    skip_c1_gap = bool(strategy.get("skip_deep_if_german_c1_gap", True))
+    deep_limit = int(strategy.get("deep_evidence_limit", 14) or 14)
+    reserve_doc_calls = max(0, int(strategy.get("reserve_calls_for_new_packages", 2) or 0))
+    reuse_completed = bool(strategy.get("reuse_completed_deep", True))
+    reuse_legacy = bool(strategy.get("reuse_legacy_deep", True))
+    refresh_changed = bool(strategy.get("refresh_if_job_description_changed", True))
+    max_new_packages = max(0, int(strategy.get("max_new_packages_per_run", 2) or 0))
 
+    _local_rank_started = time.perf_counter()
     work = []
+    deep_pool = []
     for c in candidates:
         job, fp, context = c["job"], c["fp"], c["context"]
         state = db.get_job_state(fp) or {}
         cached = _match_from_json(state.get("match_json"))
-        cached_pending_screen = bool(
-            cached is not None
-            and cached.analysis_version == "1.8.2"
-            and cached.source == "ai_screen"
-            and cached.deep_pending
-        )
-        should_refresh = cached is None or cached.source == "heuristic" or cached.analysis_version != "1.8.2"
+        current_hash = _analysis_input_hash(job)
         item = dict(c)
         item["state_before"] = state
-        item["screen"] = None
-        item["screen_evidence"] = []
+        item["analysis_input_hash"] = current_hash
         item["needs_deep"] = False
         item["deep_rank"] = -1.0
 
-        if cached_pending_screen:
-            # A good screen from a previous cycle that missed the deep budget should
-            # compete for a deep slot now without paying for the same screen again.
+        reusable = False
+        if cached is not None and cached.source in {"codex_cli", "openai_api"} and cached.evaluation_stage == "deep" and not cached.deep_pending:
+            if state.get("has_application"):
+                # An existing application is immutable during normal search. Preserve the
+                # deep analysis that justified it; do not refresh it merely because a
+                # career page changed wording. Explicit repair is document-only.
+                reusable = True
+            elif cached.analysis_input_hash:
+                reusable = bool(reuse_completed and (not refresh_changed or cached.analysis_input_hash == current_hash))
+            else:
+                # Completed V1.8.x deep analyses are valuable and expensive. Reuse them
+                # by default instead of refreshing the whole historical database merely
+                # because the software version changed.
+                reusable = bool(reuse_completed and reuse_legacy)
+
+        if reusable:
             match = cached
-            item["screen"] = {
-                "screen_score": int(cached.screen_score or cached.score or c["base"]),
-                "decision": str(cached.screen_decision or "PROMOTE"),
-                "reason": cached.reasoning,
-                "mandatory_gaps": list(cached.missing_required or []),
-                "evidence_ids": list(cached.evidence_ids or []),
-            }
-            item["needs_deep"] = True
-            sscore = int(item["screen"]["screen_score"] or c["base"])
-            sdecision = str(item["screen"]["decision"] or "PROMOTE").upper()
-            tier_bonus = {"core": 24, "adjacent": 10, "stretch": 0}.get(str(context.get("career_tier", "adjacent")), 6)
-            decision_bonus = 10 if sdecision == "PROMOTE" else 0
-            item["deep_rank"] = (
-                sscore * 2.0 + float(c["base"]) + float(c["relevance_rank"]) * 0.35
-                + float(c["freshness_rank"]) * 3.0 + tier_bonus + decision_bonus
-                + (8 if job.source == "manual" else 0)
-            )
-        elif not should_refresh:
-            # Current completed deep/HOLD analyses may be reused; context fields are
-            # refreshed below before priority is recomputed.
-            match = cached
-        elif not ai.enabled:
-            evidence = retrieve_evidence(job, registry, limit=screen_limit, career_family=context["career_family"])
+        else:
+            evidence = retrieve_evidence(job, registry, limit=deep_limit, career_family=context["career_family"])
             ids = [str(x.get("id")) for x in evidence if x.get("id")]
             match = ai.heuristic_match(job, profile, context, ids)
-            evaluated += 1
-        elif not tiered_enabled:
-            # Compatibility mode: a non-tiered configuration still performs a full
-            # match for every refreshed candidate.
-            lexical = retrieve_evidence(job, registry, limit=deep_limit, career_family=context["career_family"])
-            semantic_ids = ai.select_evidence(job, profile, registry, context, lexical, limit=deep_limit)
-            deep_evidence = evidence_by_ids(semantic_ids, registry) or lexical
-            match = ai.match(job, profile, deep_evidence, context=context, base_score=c["base"])
-            deep_evaluated += 1
-            evaluated += 1
-        else:
-            force_manual = force_manual_cfg and job.source == "manual"
-            if c["base"] < screen_min and not force_manual:
-                evidence = retrieve_evidence(job, registry, limit=screen_limit, career_family=context["career_family"])
-                ids = [str(x.get("id")) for x in evidence if x.get("id")]
-                match = ai.heuristic_match(job, profile, context, ids)
-                evaluated += 1
-            elif screened >= max_screen:
-                evidence = retrieve_evidence(job, registry, limit=screen_limit, career_family=context["career_family"])
-                ids = [str(x.get("id")) for x in evidence if x.get("id")]
-                match = ai.heuristic_match(job, profile, context, ids)
-                match.deep_pending = bool(c["base"] >= force_pre)
-                match.decision_reasons.append("AI screening budget for this cycle was exhausted; retry on a later run.")
-                evaluated += 1
-            else:
-                evidence = retrieve_evidence(job, registry, limit=screen_limit, career_family=context["career_family"])
-                screen = ai.screen(job, profile, evidence, context, base_score=c["base"])
-                screened += 1
-                evaluated += 1
-                match = ai.screen_to_match(job, profile, evidence, context, c["base"], screen)
-                item["screen"] = screen
-                item["screen_evidence"] = evidence
-                sscore = int(screen.get("screen_score", c["base"]) or c["base"])
-                sdecision = str(screen.get("decision", "HOLD")).upper()
-                promote = sdecision == "PROMOTE" or sscore >= deep_min or c["base"] >= force_pre
-                item["needs_deep"] = bool(promote)
-                match.deep_pending = bool(promote)
-                if promote:
-                    tier_bonus = {"core": 24, "adjacent": 10, "stretch": 0}.get(str(context.get("career_tier", "adjacent")), 6)
-                    decision_bonus = 10 if sdecision == "PROMOTE" else 0
-                    item["deep_rank"] = (
-                        sscore * 2.0
-                        + float(c["base"])
-                        + float(c["relevance_rank"]) * 0.35
-                        + float(c["freshness_rank"]) * 3.0
-                        + tier_bonus
-                        + decision_bonus
-                        + (8 if job.source == "manual" else 0)
-                    )
+            match.analysis_version = "1.9.0"
+            match.analysis_input_hash = current_hash
+            match.deep_pending = False
+            user_decision = str(state.get("user_decision", "") or "").upper()
+            force_manual = job.source == "manual"
+            terminal_decision = user_decision in {"SKIP", "NOT_INTERESTED", "APPLIED", "INTERVIEW", "REJECTED", "OFFER"}
+
+            # Calculate a cheap practical priority before allocating scarce Codex calls.
+            # This prevents high technical PRE scores with obvious practical blockers
+            # (for example explicit C1 German vs verified B1) from consuming deep slots.
+            local_pscore, _, _ = calculate_priority(job, match, cfg, feedback_adjustment=feedback_adjustments.get(context["career_family"], 0.0))
+            item["local_priority_score"] = int(local_pscore)
+            explicit_c1_gap = context.get("german_requirement") == "c1_plus_or_fluent"
+            actionable = bool(local_pscore >= deep_min_local_priority)
+
+            # Existing application packages are immutable during normal search runs.
+            # Do not spend a deep-refresh call on them even if the vacancy text changed.
+            # Explicit repair mode handles document regeneration separately.
+            has_package = bool(state.get("has_application"))
+            deserves_deep = bool(
+                not has_package and not terminal_decision
+                and (c["base"] >= deep_min_pre or force_manual or user_decision == "APPLY")
+                and (actionable or force_manual or user_decision == "APPLY")
+                and (not (skip_c1_gap and explicit_c1_gap) or force_manual or user_decision == "APPLY")
+            )
+            if deserves_deep:
+                match.deep_pending = True
+                item["needs_deep"] = True
+                tier_bonus = {"core": 28, "adjacent": 12, "stretch": 0}.get(str(context.get("career_tier", "adjacent")), 6)
+                decision_bonus = 28 if user_decision == "APPLY" else 0
+                item["deep_rank"] = (
+                    float(local_pscore) * 2.2
+                    + float(c["base"]) * 1.1
+                    + float(c["relevance_rank"]) * 0.35
+                    + float(c["freshness_rank"]) * 4.0
+                    + tier_bonus + decision_bonus
+                    + (20 if force_manual else 0)
+                )
+                deep_pool.append(item)
+            elif (c["base"] >= deep_min_pre and not has_package and not terminal_decision):
+                match.deep_pending = True
+                if skip_c1_gap and explicit_c1_gap and user_decision != "APPLY":
+                    match.decision_reasons.append("Deep Codex review skipped locally because the vacancy explicitly requires C1+/fluent German while verified German is B1; mark Interested to override.")
+                elif not actionable and user_decision != "APPLY":
+                    match.decision_reasons.append(f"Deep Codex review skipped locally because practical pre-priority {local_pscore} is below the configured deep threshold {deep_min_local_priority}; mark Interested to override.")
         item["match"] = match
         work.append(item)
+        evaluated += 1
 
-    _elapsed_before_deep = time.perf_counter()
-    stage_marks["screening_seconds"] = round(_elapsed_before_deep - run_started - stage_marks.get("discovery_seconds", 0.0) - stage_marks.get("enrichment_filtering_seconds", 0.0), 3)
+    stage_marks["local_ranking_seconds"] = round(time.perf_counter() - _local_rank_started, 3)
+    stage_marks["screening_seconds"] = 0.0
 
-    # Phase 2b: choose the best deep candidates only AFTER all compact screens are
-    # available. This is the V1.8.2 global deep-budget allocator.
-    deep_pool = [x for x in work if x.get("needs_deep")]
+    # Reserve calls for actual application documents. If the local usage hint has locked
+    # Codex (for example because only a few percent of the monthly allowance remain),
+    # AIEngine.enabled is false and the run becomes discovery/local-ranking only.
     deep_pool.sort(key=lambda x: (x.get("deep_rank", -1), x.get("ordering_score", 0)), reverse=True)
-    selected_deep = {x["fp"] for x in deep_pool[:max_deep]}
+    remaining_after_reserve = max(0, _ai_remaining_calls(ai) - reserve_doc_calls) if ai.enabled else 0
+    deep_slots = min(max_new_deep, remaining_after_reserve)
+    selected_deep = {x["fp"] for x in deep_pool[:deep_slots]}
+    deep_candidates_local = len(deep_pool)
+    deep_selected_planned = len(selected_deep)
+    deep_deferred = max(0, deep_candidates_local - deep_selected_planned)
 
+    _deep_started = time.perf_counter()
     for item in work:
+        if not item.get("needs_deep"):
+            continue
         if item["fp"] not in selected_deep:
-            if item.get("needs_deep"):
-                item["match"].deep_pending = True
-                note = "Promoted by AI screen, but not selected by the globally ranked deep-analysis budget; retry on a later run."
-                if note not in item["match"].decision_reasons:
-                    item["match"].decision_reasons.append(note)
+            note = "Local ranking marked this job for deep review, but the resource-governed deep budget deferred it to a later run."
+            if note not in item["match"].decision_reasons:
+                item["match"].decision_reasons.append(note)
+            item["match"].deep_pending = True
             continue
         job, context = item["job"], item["context"]
-        lexical_deep = retrieve_evidence(job, registry, limit=deep_limit, career_family=context["career_family"])
-        semantic_enabled = bool(cfg.get("evidence", {}).get("semantic_selection", {}).get("enabled", True))
-        if semantic_enabled:
-            semantic_ids = ai.select_evidence(job, profile, registry, context, lexical_deep, limit=deep_limit)
-            deep_evidence = evidence_by_ids(semantic_ids, registry) or lexical_deep
+        deep_evidence = retrieve_evidence(job, registry, limit=deep_limit, career_family=context["career_family"])
+        deep_match = ai.match(job, profile, deep_evidence, context=context, base_score=item["base"], screen_data={})
+        if deep_match.source in {"codex_cli", "openai_api"} and deep_match.evaluation_stage == "deep":
+            deep_match.analysis_version = "1.9.0"
+            deep_match.analysis_input_hash = item["analysis_input_hash"]
+            deep_match.analyzed_at = datetime.now(timezone.utc).isoformat()
+            deep_match.deep_pending = False
+            deep_evaluated += 1
         else:
-            deep_evidence = lexical_deep
-        item["match"] = ai.match(
-            job, profile, deep_evidence, context=context, base_score=item["base"], screen_data=item.get("screen") or {}
-        )
-        item["match"].deep_pending = False
-        deep_evaluated += 1
+            deep_match.analysis_version = "1.9.0"
+            deep_match.analysis_input_hash = item["analysis_input_hash"]
+            deep_match.deep_pending = True
+            note = "Deep AI was unavailable, failed, or was blocked by the local usage budget; local PRE assessment retained."
+            if note not in deep_match.decision_reasons:
+                deep_match.decision_reasons.append(note)
+        item["match"] = deep_match
 
-    stage_marks["deep_matching_seconds"] = round(time.perf_counter() - _elapsed_before_deep, 3)
+    stage_marks["deep_matching_seconds"] = round(time.perf_counter() - _deep_started, 3)
     _phase3_started = time.perf_counter()
 
-    # Phase 3: practical priority, persistence, packages and notifications.
+    # Phase 3a: compute/persist final practical priority for every job first. Documents are
+    # generated only after the whole queue is ranked, so package calls go to the best NEW
+    # opportunities rather than whichever job happened to be iterated first.
+    package_queue = []
     for item in work:
         job, fp, active, context, source_cv = item["job"], item["fp"], item["active"], item["context"], item["source_cv"]
         match = item["match"]
-        # Keep dynamic context current even when an existing AI analysis was reused.
         match.job_language = context["job_language"]
         match.employment_type = context["employment_type"]
         match.career_stage = context["career_stage"]
@@ -587,120 +742,116 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
 
         adjustment = feedback_adjustments.get(context["career_family"], 0.0)
         pscore, plabel, preasons = calculate_priority(job, match, cfg, feedback_adjustment=adjustment)
-        deep_match = match.source in {"codex_cli", "openai_api"} and match.evaluation_stage == "deep"
-
-        # PRE/SCREEN are triage signals, not final application decisions. A promising
-        # incomplete evaluation can remain visible, but it cannot be labelled final
-        # HIGH/APPLY or trigger document generation until deep matching is complete.
-        if not deep_match and plabel == "HIGH":
+        completed_deep = match.source in {"codex_cli", "openai_api"} and match.evaluation_stage == "deep" and not match.deep_pending
+        if not completed_deep and plabel == "HIGH":
             high_min = int(cfg.get("priority", {}).get("high_min", 82))
-            pscore = min(pscore, max(0, high_min - 1))
-            plabel = "REVIEW"
+            pscore = min(pscore, max(0, high_min - 1));plabel = "REVIEW"
             pending_reason = "Final HIGH/APPLY status requires a completed deep AI assessment."
-            if pending_reason not in preasons:
-                preasons.append(pending_reason)
+            if pending_reason not in preasons:preasons.append(pending_reason)
             match.deep_pending = True
 
-        match.priority_score = pscore
-        match.priority_label = plabel
-        match.priority_reasons = preasons
-        practical_action = {"HIGH":"APPLY", "REVIEW":"REVIEW", "LOW":"SAVE_OR_SKIP", "REJECT":"REJECT"}.get(plabel, "REVIEW")
-        match.decision = practical_action
+        match.priority_score = pscore;match.priority_label = plabel;match.priority_reasons = preasons
+        match.decision = {"HIGH":"APPLY", "REVIEW":"REVIEW", "LOW":"SAVE_OR_SKIP", "REJECT":"REJECT"}.get(plabel, "REVIEW")
         for reason in preasons:
-            if reason not in match.decision_reasons:
-                match.decision_reasons.append(reason)
+            if reason not in match.decision_reasons:match.decision_reasons.append(reason)
         db.set_match(fp, match)
-
-        if match.score >= min_score:
-            strong.append((job, match))
+        if match.score >= min_score:strong.append((job, match))
 
         state = db.get_job_state(fp) or {}
         user_decision = str(state.get("user_decision", "") or "").upper()
-        app_status = state.get("application_status")
-        legacy_package_needs_audit = False
-        if state.get("has_application", False) and state.get("package_dir"):
-            audit_required = bool(cfg.get("evidence", {}).get("semantic_audit", {}).get("required_for_ready", True))
-            if audit_required:
-                try:
-                    status_path = Path(str(state.get("package_dir"))) / "package_status.json"
-                    pdata = json.loads(status_path.read_text(encoding="utf-8")) if status_path.exists() else {}
-                    legacy_package_needs_audit = not bool(pdata.get("semantic_evidence_audit_ok"))
-                except Exception:
-                    legacy_package_needs_audit = True
-
-        package_eligible = (
-            deep_match
-            and match.priority_score >= package_priority
-            and active != "expired"
+        if (not completed_deep and match.deep_pending and match.score >= local_pre_notify
+                and active != "expired" and user_decision not in {"SKIP","NOT_INTERESTED"}
+                and not state.get("has_application", False)):
+            if _notify_once(
+                db, fp, "strong_local_candidate", "Strong job candidate awaiting deep review",
+                f"{job.title} at {job.company} — local PRE {match.score}, Priority {match.priority_score}. "
+                "Codex deep analysis was deferred by the resource budget; review it in the dashboard.",
+                desktop and not dry_run,
+            ):
+                notifications_sent += 1
+        package_eligible = bool(
+            completed_deep and match.priority_score >= package_priority and active != "expired"
             and user_decision not in {"SKIP", "NOT_INTERESTED"}
-            and (not state.get("has_application", False) or (app_status == "needs_ai_or_review" and ai.enabled) or legacy_package_needs_audit)
         )
-        if package_eligible and dry_run:
-            would_generate.append({
-                "fingerprint": fp, "title": job.title, "company": job.company,
-                "fit": match.score, "priority": match.priority_score,
-            })
+        if not package_eligible:
+            continue
+        if state.get("has_application", False):
+            # Normal search NEVER regenerates an existing package. Explicit repair mode is
+            # the only place where an existing package can be rebuilt. If a user copied
+            # only the DB to a new project folder and forgot the application artifacts,
+            # surface that safely instead of silently spending AI to recreate them.
+            existing_packages_skipped += 1
+            package_dir = str(state.get("package_dir", "") or "")
+            if package_dir and not Path(package_dir).exists() and not dry_run:
+                if _notify_once(
+                    db, fp, "package_artifacts_missing", "Existing application files are missing",
+                    f"{job.title} at {job.company} has an application record, but its package folder is not present here. Copy output/applications from the previous version or use explicit repair mode later.",
+                    desktop,
+                ):
+                    notifications_sent += 1
+            continue
+        package_queue.append({"item":item,"job":job,"fp":fp,"match":match,"source_cv":source_cv})
 
-        if package_eligible and not dry_run:
+    package_queue.sort(key=lambda x: (x["match"].priority_score, x["match"].score, x["item"].get("freshness_rank",0)), reverse=True)
+    if dry_run:
+        for x in package_queue[:max_new_packages]:
+            would_generate.append({"fingerprint":x["fp"],"title":x["job"].title,"company":x["job"].company,"fit":x["match"].score,"priority":x["match"].priority_score})
+    else:
+        package_slots = min(max_new_packages, _ai_remaining_calls(ai) if ai.enabled else 0)
+        selected_packages = package_queue[:package_slots]
+        queued_packages = [
+            {"fingerprint":x["fp"],"title":x["job"].title,"company":x["job"].company,"fit":x["match"].score,"priority":x["match"].priority_score,"reason":"new-package AI budget/cap exhausted"}
+            for x in package_queue[package_slots:]
+        ]
+        for x in selected_packages:
+            item,job,fp,match,source_cv=x["item"],x["job"],x["fp"],x["match"],x["source_cv"]
             doc_evidence = _document_evidence(job, match, registry, cfg)
             try:
                 pkg, res = generate_package(job, match, profile, cfg, ai, fp, source_cv, evidence_items=doc_evidence, audit_evidence_items=registry)
             except Exception as exc:
-                # A single document/package failure must never abort the entire job-search run.
-                # Persist an actionable error record and continue with the remaining jobs.
-                err = {
-                    "fingerprint": fp, "title": job.title, "company": job.company,
-                    "fit": match.score, "priority": match.priority_score,
-                    "error_type": type(exc).__name__, "error": str(exc),
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                }
+                err={"fingerprint":fp,"title":job.title,"company":job.company,"fit":match.score,"priority":match.priority_score,"error_type":type(exc).__name__,"error":str(exc),"timestamp":datetime.now(timezone.utc).isoformat()}
                 package_errors.append(err)
-                ep = Path("output/package_errors") / datetime.now().strftime("%Y-%m-%d") / f"{fp}.json"
-                ep.parent.mkdir(parents=True, exist_ok=True)
-                ep.write_text(json.dumps(err, ensure_ascii=False, indent=2), encoding="utf-8")
-                if match.priority_score >= immediate_priority:
-                    sent = notify(
-                        "High-priority package generation failed",
-                        f"{job.title} at {job.company} — document generation failed, but the agent continued. Error record: {ep}",
-                        desktop,
-                    )
-                    if sent:
-                        notifications_sent += 1
+                ep=Path("output/package_errors")/datetime.now().strftime("%Y-%m-%d")/f"{fp}.json";ep.parent.mkdir(parents=True,exist_ok=True);ep.write_text(json.dumps(err,ensure_ascii=False,indent=2),encoding="utf-8")
+                if match.priority_score >= immediate_priority and _notify_once(db,fp,"package_error","High-priority package generation failed",f"{job.title} at {job.company}. Error record: {ep}",desktop):notifications_sent += 1
                 continue
-            status = "package_ready" if res.get("ready") else "needs_ai_or_review"
-            db.record_application(fp, str(pkg), status=status)
+            status="package_ready" if res.get("ready") else "needs_ai_or_review";db.record_application(fp,str(pkg),status=status)
             if res.get("ready"):
-                packages.append((job, match, pkg, res))
-                if match.priority_score >= immediate_priority:
-                    sent = notify(
-                        "High-priority application ready",
-                        f"{job.title} at {job.company} — Fit {match.score}, Priority {match.priority_score} ({match.priority_label}). Files: {pkg}",
-                        desktop,
-                    )
-                    if sent:
-                        notifications_sent += 1
+                packages.append((job,match,pkg,res))
+                if match.priority_score >= immediate_priority and _notify_once(db,fp,"package_ready","High-priority application ready",f"{job.title} at {job.company} — Fit {match.score}, Priority {match.priority_score}. Files: {pkg}",desktop):notifications_sent += 1
             else:
-                not_ready.append((job, match, pkg, res))
-                if match.priority_score >= immediate_priority:
-                    sent = notify(
-                        "High-priority job needs package review",
-                        f"{job.title} at {job.company} — Fit {match.score}, Priority {match.priority_score} ({match.priority_label}). Package was created but is not READY; review: {pkg}",
-                        desktop,
-                    )
-                    if sent:
-                        notifications_sent += 1
+                not_ready.append((job,match,pkg,res))
+                if match.priority_score >= immediate_priority and _notify_once(db,fp,"package_review","High-priority job needs package review",f"{job.title} at {job.company} — package created but not READY. Review: {pkg}",desktop):notifications_sent += 1
+
+        # High-priority new jobs that could not receive a package because the local AI
+        # budget was intentionally exhausted are still surfaced once, so resource control
+        # cannot make the user miss an important opportunity.
+        for q in queued_packages:
+            if int(q.get("priority",0) or 0) >= immediate_priority:
+                if _notify_once(db,q["fingerprint"],"package_queued","High-priority job queued",f"{q['title']} at {q['company']} is high priority, but the local Codex budget preserved your allowance. Package generation is queued for a later run.",desktop):notifications_sent += 1
 
     stage_marks["priority_documents_notifications_seconds"] = round(time.perf_counter() - _phase3_started, 3)
     stage_marks["total_seconds"] = round(time.perf_counter() - run_started, 3)
     http_stats = page_checker.policy.stats() if page_checker is not None and hasattr(page_checker.policy, "stats") else {}
 
+    application_index = _write_application_index(db)
     write_feedback_summary(db, cfg)
     usage_after = db.usage_stats()
     usage_ops_after = db.usage_by_operation()
     usage_this_run = _usage_delta(usage_before, usage_after)
     usage_ops_this_run = _operation_usage_delta(usage_ops_before, usage_ops_after)
+    resource_plan = {
+        "max_new_deep_per_run": max_new_deep,
+        "deep_candidates_local": deep_candidates_local,
+        "deep_selected_planned": deep_selected_planned,
+        "deep_deferred": deep_deferred,
+        "reserve_calls_for_new_packages": reserve_doc_calls,
+        "max_new_packages_per_run": max_new_packages,
+        "new_package_candidates": len(package_queue),
+        "hard_max_calls_per_run": _ai_budget_snapshot(ai).get("max_calls_per_run"),
+        "hard_max_estimated_input_tokens_per_run": _ai_budget_snapshot(ai).get("max_estimated_input_tokens_per_run"),
+    }
     last_run_report = {
-        "version": "1.8.3",
+        "version": "1.9.0",
         "completed_at": datetime.now(timezone.utc).isoformat(),
         "ai_backend": ai.backend_name(),
         "dry_run": bool(dry_run),
@@ -712,9 +863,18 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
         "post_enrichment_rejected": post_enrichment_rejected,
         "freshness_filtered": freshness_filtered,
         "eligible_after_filters": len(candidates),
+        "detail_page_checks_used": detail_checks_used,
+        "detail_enrichment_deferred": detail_deferred,
+        "detail_checks_skipped_full_description": detail_skipped_full_description,
         "ai_screened": screened,
         "deep_ai_evaluated": deep_evaluated,
-        "execution_mode": "MATCH_ONLY" if dry_run else "FULL_APPLICATION_PREP",
+        "ai_strategy": "LOCAL_RANKING_THEN_DEEP",
+        "resource_plan": resource_plan,
+        "ai_budget": _ai_budget_snapshot(ai),
+        "rolling_ai_budget": rolling_budget,
+        "existing_packages_skipped": existing_packages_skipped,
+        "queued_new_packages": queued_packages,
+        "execution_mode": "LOCAL_PREVIEW" if dry_run else "FULL_APPLICATION_PREP",
         "document_generation_enabled": not bool(dry_run),
         "notifications_enabled": bool((not dry_run) and desktop),
         "packages_would_generate": len(would_generate),
@@ -724,6 +884,7 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
         "package_generation_errors": len(package_errors),
         "package_error_details": package_errors[:25],
         "notifications_sent": notifications_sent,
+        "application_index": application_index,
         "stage_seconds": stage_marks,
         "http": http_stats,
         "token_counts_note": "Estimated from text length for Codex CLI; not official OpenAI account usage or billing data.",
@@ -740,12 +901,21 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
         "raw_found": len(found),
         "unique": len(unique),
         "eligible_after_filters": len(candidates),
+        "detail_page_checks_used": detail_checks_used,
+        "detail_enrichment_deferred": detail_deferred,
+        "detail_checks_skipped_full_description": detail_skipped_full_description,
         "title_gate_rejected": title_gate_rejected,
         "post_enrichment_rejected": post_enrichment_rejected,
         "freshness_filtered": freshness_filtered,
         "evaluated": evaluated,
         "ai_screened": screened,
         "deep_ai_evaluated": deep_evaluated,
+        "ai_strategy": "LOCAL_RANKING_THEN_DEEP",
+        "resource_plan": resource_plan,
+        "ai_budget": _ai_budget_snapshot(ai),
+        "rolling_ai_budget": rolling_budget,
+        "existing_packages_skipped": existing_packages_skipped,
+        "queued_new_packages": queued_packages,
         "strong_matches": len(strong),
         "ready_packages": len(packages),
         "packages_needing_ai_or_review": len(not_ready),
@@ -753,7 +923,8 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
         "packages_would_generate": len(would_generate),
         "package_candidates": would_generate[:25],
         "notifications_sent": notifications_sent,
-        "execution_mode": "MATCH_ONLY" if dry_run else "FULL_APPLICATION_PREP",
+        "application_index": application_index,
+        "execution_mode": "LOCAL_PREVIEW" if dry_run else "FULL_APPLICATION_PREP",
         "stage_seconds": stage_marks,
         "http": http_stats,
         "errors": errors,
@@ -795,12 +966,41 @@ def resume_application_packages(cfg: dict, db: Database, repair_existing: bool =
     profile = load_profile(cfg.get("documents", {}).get("profile", "input/profile.json"))
     db.configure_telemetry(cfg)
     ai = AIEngine(cfg, usage_recorder=db.record_usage)
+    rolling_budget = _apply_rolling_ai_budget(cfg, db, ai)
     registry = load_evidence_registry(cfg)
     package_priority = int(cfg.get("priority", {}).get("package_generation_min", 74))
     immediate_priority = int(cfg.get("notifications", {}).get("immediate_priority_min", 82))
     desktop = bool(cfg.get("notifications", {}).get("desktop", True))
     usage_before = db.usage_stats(); ops_before = db.usage_by_operation()
     ready = []; needs_review = []; errors = []; skipped_existing = 0; eligible = 0; notifications_sent = 0
+    strategy = cfg.get("ai", {}).get("strategy", {}) or {}
+    max_packages = max(0, int(strategy.get("max_repair_packages_per_run" if repair_existing else "max_new_packages_per_run", 2) or 0))
+    budget_deferred = []
+    existing_application_index = _write_application_index(db)
+
+    # Never overwrite a package with fallback/plain content merely because the official
+    # Codex allowance is nearly exhausted or the local safety lock is active.
+    if not ai.enabled:
+        mode = "REPAIR_EXISTING_PACKAGES" if repair_existing else "RESUME_PACKAGES_ONLY"
+        report = {
+            "version":"1.9.0","mode":mode,"completed_at":datetime.now(timezone.utc).isoformat(),
+            "ai_backend":ai.backend_name(),"ai_budget":_ai_budget_snapshot(ai),"rolling_ai_budget":rolling_budget,"eligible_cached_deep_matches":0,
+            "skipped_existing_packages":0,"packages_ready":0,"packages_needing_review":0,
+            "package_generation_errors":0,"notifications_sent":0,"usage_this_resume":_usage_delta(usage_before, db.usage_stats()),
+            "usage_by_operation_this_resume":[],"ready":[],"needs_review":[],"errors":[],"budget_deferred":[],"application_index":existing_application_index,
+            "duration_seconds":round(time.perf_counter()-started,3),
+            "note":"Document generation did not run because AI/Codex is unavailable or locally budget-locked. Existing packages were left untouched."
+        }
+        rp=Path("output/resume_packages_report.json");rp.parent.mkdir(parents=True,exist_ok=True);rp.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding="utf-8")
+        Path("output/last_run_report.json").write_text(json.dumps({
+            "version":"1.9.0","completed_at":report["completed_at"],"ai_backend":ai.backend_name(),"ai_budget":_ai_budget_snapshot(ai),"rolling_ai_budget":rolling_budget,
+            "execution_mode":mode,"document_generation_enabled":False,"notifications_enabled":False,
+            "usage_this_run":report["usage_this_resume"],"usage_by_operation_this_run":[],"packages_ready":0,
+            "packages_needing_ai_or_review":0,"packages_would_generate":0,"package_generation_errors":0,
+            "notifications_sent":0,"stage_seconds":{"document_recovery_seconds":report["duration_seconds"],"total_seconds":report["duration_seconds"]},
+            "http":{"page_fetches":0,"cache_hits":0,"network_requests":0,"retries":0,"errors":0,"throttle_sleep_seconds":0.0}
+        },ensure_ascii=False,indent=2),encoding="utf-8")
+        return report
 
     for row in db.top_jobs(5000):
         match = _match_from_json(row["match_json"])
@@ -820,6 +1020,9 @@ def resume_application_packages(cfg: dict, db: Database, repair_existing: bool =
             if app_status == "package_ready" or not repair_existing:
                 skipped_existing += 1
                 continue
+        if eligible >= max_packages or _ai_remaining_calls(ai) <= 0:
+            budget_deferred.append({"fingerprint":fp,"title":str(row["title"] or ""),"company":str(row["company"] or ""),"reason":"repair/resume package cap or AI budget exhausted"})
+            continue
         eligible += 1
         job = Job(
             source=str(row["source"] or ""), source_id=str(row["source_id"] or ""),
@@ -863,17 +1066,21 @@ def resume_application_packages(cfg: dict, db: Database, repair_existing: bool =
                 if notify("High-priority job needs package review", f"{job.title} at {job.company}. Review: {pkg}", desktop):
                     notifications_sent += 1
 
+    application_index = _write_application_index(db)
     usage_after = db.usage_stats(); ops_after = db.usage_by_operation()
     usage_delta = _usage_delta(usage_before, usage_after)
     ops_delta = _operation_usage_delta(ops_before, ops_after)
     duration = round(time.perf_counter() - started, 3)
     mode = "REPAIR_EXISTING_PACKAGES" if repair_existing else "RESUME_PACKAGES_ONLY"
     report = {
-        "version": "1.8.3", "mode": mode,
+        "version": "1.9.0", "mode": mode,
         "completed_at": datetime.now(timezone.utc).isoformat(), "ai_backend": ai.backend_name(),
+        "ai_budget": _ai_budget_snapshot(ai), "rolling_ai_budget": rolling_budget,
         "eligible_cached_deep_matches": eligible, "skipped_existing_packages": skipped_existing,
+        "budget_deferred": budget_deferred,
         "packages_ready": len(ready), "packages_needing_review": len(needs_review),
         "package_generation_errors": len(errors), "notifications_sent": notifications_sent,
+        "application_index": application_index,
         "usage_this_resume": usage_delta, "usage_by_operation_this_resume": ops_delta,
         "ready": ready, "needs_review": needs_review, "errors": errors,
         "duration_seconds": duration,
@@ -883,8 +1090,8 @@ def resume_application_packages(cfg: dict, db: Database, repair_existing: bool =
     rp.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     # Keep the dashboard's single 'last run' view correct after recovery/repair mode.
     last = {
-        "version": "1.8.3", "completed_at": report["completed_at"], "ai_backend": ai.backend_name(),
-        "execution_mode": mode, "document_generation_enabled": True, "notifications_enabled": True,
+        "version": "1.9.0", "completed_at": report["completed_at"], "ai_backend": ai.backend_name(),
+        "ai_budget": _ai_budget_snapshot(ai), "rolling_ai_budget": rolling_budget, "execution_mode": mode, "document_generation_enabled": True, "notifications_enabled": True,
         "usage_this_run": usage_delta, "usage_by_operation_this_run": ops_delta,
         "packages_ready": len(ready), "packages_needing_ai_or_review": len(needs_review),
         "packages_would_generate": 0, "package_generation_errors": len(errors),
