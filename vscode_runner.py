@@ -1,8 +1,8 @@
 # %% [markdown]
-# JOB SEARCH AGENT V1.8 — VS CODE / CONDA RUNNER
+# JOB SEARCH AGENT V1.8.1 — VS CODE / CONDA RUNNER
 #
 # Select the Conda interpreter named `agent`, then run cells with Shift+Enter.
-# V1.8 adds a domain relevance gate, domain-anchored PRE scoring, relevance-first AI budgeting,
+# V1.8.1 adds a domain relevance gate, domain-anchored PRE scoring, relevance-first AI budgeting,
 # tighter search queries and a dashboard that hides hard rejects by default. V1.6/V1.7 safety/discovery remains.
 
 # %% SETUP — Shift+Enter
@@ -42,7 +42,7 @@ def run_once(dry_run: bool = False):
     db = Database(DB_FILE)
     try:
         backend = AIEngine(cfg).backend_name()
-        print(f"\n=== Job Agent V1.8 | AI backend: {backend} | dry_run={dry_run} ===")
+        print(f"\n=== Job Agent V1.8.1 | AI backend: {backend} | dry_run={dry_run} ===")
         result = run_pipeline(cfg, db, dry_run=dry_run)
         dashboard = build_dashboard(db, cfg=cfg)
         digest = build_digest(db, min_priority=int(cfg.get("notifications", {}).get("digest_priority_min", 68)))
@@ -100,6 +100,8 @@ print("Verified evidence objects:", len(load_evidence_registry(cfg)))
 print("Source CVs:")
 for src in configured_cv_sources(cfg): print("  -", src.key, "->", src.path)
 print("Relevance gate:", cfg.get("relevance", {}))
+print("Freshness policy:", {k: cfg.get("search", {}).get(k) for k in ("fresh_days","full_eligibility_days","active_grace_days","strong_title_max_days")})
+print("Per-run AI telemetry: output/last_run_report.json")
 print("Tiered AI:", cfg.get("ai", {}).get("tiered", {}))
 print("Priority thresholds:", cfg.get("priority", {}))
 print("Feedback learning:", cfg.get("feedback", {}))

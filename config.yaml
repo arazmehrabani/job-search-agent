@@ -44,7 +44,15 @@ search:
   - de
   locations:
   - Germany
-  max_age_days: 7
+  # V1.8.1 staged freshness policy. 0-14 days are fully eligible; 15-30 days
+  # remain eligible when the live page is still active; 31-45 days survive only
+  # for strong target titles with confirmed live status. max_age_days is retained
+  # as a backwards-compatible fallback for older custom configs.
+  fresh_days: 7
+  full_eligibility_days: 14
+  active_grace_days: 30
+  strong_title_max_days: 45
+  max_age_days: 30
   results_per_source: 25
   verify_live_page: true
 http:
@@ -139,7 +147,7 @@ sources:
     delay_jitter_seconds: 0.25
     respect_robots_txt: true
     robots_fail_open: true
-    user_agent: JobSearchAgent/1.8
+    user_agent: JobSearchAgent/1.8.1
     results_per_query: 8
   arbeitnow:
     enabled: true

@@ -1,4 +1,21 @@
-# Job Search Agent V1.8
+# Job Search Agent V1.8.1
+
+V1.8.1 is the **freshness / priority correction** release built on the V1.8 relevance gate. It keeps the strict local rejection of unrelated software/business jobs while fixing the remaining issues found in the first real V1.8 output review.
+
+## V1.8.1 — corrections after real-output review
+
+- Replaces the 7-day hard cutoff with staged freshness: 0-14 days fully eligible, 15-30 days live-checked, 31-45 days only for strong target titles with confirmed live status.
+- Gives fresher vacancies priority within the same relevance tier before scarce Codex screening/deep slots are allocated.
+- Normalizes Germany locations (`DE`, `Germany`, `Deutschland`, and city-only Germany results) so Priority no longer gets a false out-of-area penalty.
+- Cleans Bundesagentur result labels such as `4: Mechanical Engineer ... bei Company` into a canonical title plus separate company field.
+- Shows explicit vs contextual German importance more clearly in the dashboard.
+- Adds local `SOFTWARE_PRODUCT_DESIGN` rejection for frontend/digital product-design roles that have no physical-engineering bridge.
+- Writes `output/last_run_report.json` and displays AI calls/tokens **for this run** separately from daily usage.
+- Keeps full `why rejected` analysis for AI-evaluated jobs in the audit section.
+
+See `CHANGELOG_V1_8_1.md` for details.
+
+## V1.8 — relevance gate
 
 V1.8 is the **relevance-gate** release. It keeps V1.7.1 automatic discovery and all V1.6 safety/evidence safeguards, but fixes the major problem exposed by the 223-job dashboard: broad sources were finding plenty of vacancies while generic words such as `engineer`, `development`, `project`, `Python` and `automation` allowed obviously unrelated software/business jobs to survive too far into the pipeline.
 
@@ -94,7 +111,7 @@ This means an irrelevant backend job can remain in SQLite for transparency witho
 
 ### Recommended migration from V1.7.x
 
-Use V1.8 in a **new folder with a fresh `output/` database** for the cleanest first comparison. V1.8 will also clear stale scores when a rediscovered job becomes hard-filtered, so an old `PRE 46` backend row cannot remain actionable. Copy your personal local inputs/settings only if needed.
+Use V1.8.1 in a **new folder with a fresh `output/` database** for the cleanest first comparison. V1.8.1 will also clear stale scores when a rediscovered job becomes hard-filtered, so an old `PRE 46` backend row cannot remain actionable. Copy your personal local inputs/settings only if needed.
 
 ## Historical: V1.7.1 — automatic job discovery
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .models import MatchResult
@@ -14,7 +15,7 @@ from .sources.smartrecruiters import SmartRecruitersSource
 from .sources.manual import ManualLinksSource
 from .sources.email_alert_files import EmailAlertFilesSource
 from .pagecheck import PageChecker
-from .filters import hard_filter, age_days, heuristic_score
+from .filters import hard_filter, age_days, heuristic_score, freshness_bucket, freshness_limits
 from .relevance import title_relevance_gate, assess_relevance
 from .ai import AIEngine
 from .documents import generate_package
@@ -171,6 +172,39 @@ def _write_discovery_report(report: dict, path: str = "output/discovery_report.j
     p.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _usage_delta(before: dict, after: dict) -> dict:
+    keys = ("calls", "input_tokens", "output_tokens", "successful_calls", "estimated_cost_usd")
+    out = {}
+    for key in keys:
+        a = after.get(key, 0) or 0
+        b = before.get(key, 0) or 0
+        out[key] = max(0, a - b)
+    return out
+
+
+def _operation_usage_map(rows: list[dict]) -> dict[str, dict]:
+    return {str(r.get("operation", "")): dict(r) for r in rows}
+
+
+def _operation_usage_delta(before_rows: list[dict], after_rows: list[dict]) -> list[dict]:
+    before = _operation_usage_map(before_rows)
+    after = _operation_usage_map(after_rows)
+    out = []
+    for op in sorted(after):
+        a = after[op]; b = before.get(op, {})
+        row = {"operation": op}
+        for key in ("calls", "input_tokens", "output_tokens", "successful_calls"):
+            row[key] = max(0, int(a.get(key, 0) or 0) - int(b.get(key, 0) or 0))
+        if row["calls"] or row["input_tokens"] or row["output_tokens"]:
+            out.append(row)
+    return out
+
+
+def _write_last_run_report(report: dict, path: str = "output/last_run_report.json") -> None:
+    p = Path(path); p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
     profile = load_profile(cfg.get("documents", {}).get("profile", "input/profile.json"))
     db.configure_telemetry(cfg)
@@ -188,6 +222,8 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
     scope = load_career_scope(cfg.get("search", {}).get("career_scope_file", "input/career_scope.yaml"))
     registry = load_evidence_registry(cfg)
     feedback_adjustments = family_feedback_adjustments(db, cfg)
+    usage_before = db.usage_stats()
+    usage_ops_before = db.usage_by_operation()
 
     found, errors = [], []
     source_reports = []
@@ -221,7 +257,7 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
     broad_success = [x for x in source_reports if x.get("category") == "broad" and x.get("automatic") and x.get("success")]
     auto_discovery_active = bool(broad_success)
     discovery_report = {
-        "version": "1.8",
+        "version": "1.8.1",
         "automatic_discovery_active": auto_discovery_active,
         "planned_queries": len(queries),
         "sources": source_reports,
@@ -246,20 +282,11 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
     parse_failures = []
     title_gate_rejected = 0
     post_enrichment_rejected = 0
+    freshness_filtered = 0
+    limits = freshness_limits(cfg)
     for job in unique:
-        # Do not download obviously stale automatically-discovered detail pages.
-        # Manual URLs intentionally bypass this freshness shortcut.
-        pre_age = age_days(job)
-        max_age = cfg.get("search", {}).get("max_age_days", 7)
-        if job.source != "manual" and pre_age is not None and pre_age > max_age:
-            fp = db.upsert_job(job)
-            db.set_active(fp, "unknown")
-            db.set_filter_reason(fp, f"older than {max_age} days")
-            continue
-
-        # V1.8 cheap title gate runs before detail-page enrichment. It blocks only
-        # obvious wrong-domain titles (backend/frontend/sales/HR/etc.) with no
-        # mechanical/wind/simulation/control bridge, saving page requests and AI budget.
+        # Cheap domain rejection comes first, even for old jobs. There is no reason to
+        # spend a detail-page request on an obviously unrelated backend/sales/HR role.
         title_gate = title_relevance_gate(job, cfg)
         if not title_gate.keep:
             fp = db.upsert_job(job)
@@ -268,10 +295,35 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
             title_gate_rejected += 1
             continue
 
+        # V1.8.1 staged freshness policy: 0-14 days remain fully eligible; 15-30 day
+        # jobs may continue if the detail page confirms they are live; 31-45 day jobs
+        # get one last chance only for strong target titles. Manual URLs still bypass.
+        bucket = freshness_bucket(job, cfg)
+        if job.source != "manual":
+            if bucket == "too_old":
+                fp = db.upsert_job(job)
+                db.set_active(fp, "unknown")
+                db.set_filter_reason(fp, f"older than {limits['strong']} days")
+                freshness_filtered += 1
+                continue
+            if bucket == "strong_title_grace" and title_gate.title_strength != "strong":
+                fp = db.upsert_job(job)
+                db.set_active(fp, "unknown")
+                db.set_filter_reason(fp, f"older than {limits['grace']} days without strong target title")
+                freshness_filtered += 1
+                continue
+
         if verify:
             active, job = page_checker.check_and_enrich(job)
         else:
             active = "unknown"
+
+        if job.source != "manual" and bucket in {"active_grace", "strong_title_grace"} and active != "active":
+            fp = db.upsert_job(job)
+            db.set_active(fp, active)
+            db.set_filter_reason(fp, f"{int(age_days(job) or 0)}-day-old vacancy; live status not confirmed")
+            freshness_filtered += 1
+            continue
         bad_title = not job.title or job.title.strip().lower() in {"job", "unknown job", "careers", "job details"}
         bad_company = not job.company or job.company.strip().lower() in {"unknown company", "jobs", "careers"}
         if bad_title and bad_company:
@@ -288,7 +340,7 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
         if not ok:
             db.set_filter_reason(fp, filter_reason)
             if filter_reason in {"NO_RELEVANT_ENGINEERING_DOMAIN_SIGNAL"} or filter_reason in {
-                "PURE_SOFTWARE_BACKEND", "BUSINESS_SALES_MARKETING", "FINANCE_HR_ADMIN", "DESIGN_MEDIA_NONENGINEERING"
+                "PURE_SOFTWARE_BACKEND", "BUSINESS_SALES_MARKETING", "FINANCE_HR_ADMIN", "DESIGN_MEDIA_NONENGINEERING", "SOFTWARE_PRODUCT_DESIGN"
             }:
                 post_enrichment_rejected += 1
             continue
@@ -322,19 +374,22 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
         # Relevance rank comes before PRE score. This guarantees that a CAE/mechanical/
         # wind/simulation vacancy reaches limited AI budgets before generic or weak
         # adjacent titles returned earlier by a source. Manual links get a small bonus.
-        ordering_score = relevance.rank * 2 + base + (10 if job.source == "manual" else 0)
+        freshness_rank = {"fresh": 5, "recent": 4, "unknown": 3, "active_grace": 2, "strong_title_grace": 1}.get(bucket, 0)
+        ordering_score = relevance.rank * 2 + freshness_rank * 8 + base + (10 if job.source == "manual" else 0)
         candidates.append({
             "job": job, "fp": fp, "active": active, "context": context,
             "source_cv": source_cv, "base": base, "relevance_rank": relevance.rank,
-            "ordering_score": ordering_score,
+            "freshness_rank": freshness_rank, "ordering_score": ordering_score,
         })
 
-    candidates.sort(key=lambda x: (x["relevance_rank"], x["base"], x["ordering_score"]), reverse=True)
+    # Within the same relevance tier, fresher vacancies receive scarce Codex budget first.
+    candidates.sort(key=lambda x: (x["relevance_rank"], x["freshness_rank"], x["base"], x["ordering_score"]), reverse=True)
 
     discovery_report.update({
         "unique_results": len(unique),
         "title_gate_rejected": title_gate_rejected,
         "post_enrichment_rejected": post_enrichment_rejected,
+        "freshness_filtered": freshness_filtered,
         "eligible_after_relevance_filters": len(candidates),
     })
     _write_discovery_report(discovery_report)
@@ -351,15 +406,14 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
         match = _match_from_json(state.get("match_json"))
         # Deep AI and HOLD/SKIP screens are cached. Cheap heuristic rows are refreshed
         # so parser fixes/new Codex availability can upgrade them automatically.
-        should_refresh = match is None or match.source == "heuristic" or match.analysis_version != "1.8"
+        should_refresh = match is None or match.source == "heuristic" or match.analysis_version != "1.8.1"
         if should_refresh:
             match, screened, deep_evaluated = _evaluate_job(
                 job, profile, context, cfg, ai, registry, screened, deep_evaluated
             )
             evaluated += 1
             a = age_days(job)
-            max_age = cfg.get("search", {}).get("max_age_days", 7)
-            if job.source == "manual" and a is not None and a > max_age:
+            if job.source == "manual" and a is not None and a > freshness_limits(cfg)["full"]:
                 warning = f"Vacancy is about {int(a)} days old, but it was evaluated because you supplied the URL manually."
                 if warning not in match.risks:
                     match.risks.append(warning)
@@ -429,6 +483,28 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
                 not_ready.append((job, match, pkg, res))
 
     write_feedback_summary(db, cfg)
+    usage_after = db.usage_stats()
+    usage_ops_after = db.usage_by_operation()
+    usage_this_run = _usage_delta(usage_before, usage_after)
+    usage_ops_this_run = _operation_usage_delta(usage_ops_before, usage_ops_after)
+    last_run_report = {
+        "version": "1.8.1",
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "ai_backend": ai.backend_name(),
+        "dry_run": bool(dry_run),
+        "usage_this_run": usage_this_run,
+        "usage_by_operation_this_run": usage_ops_this_run,
+        "raw_found": len(found),
+        "unique": len(unique),
+        "title_gate_rejected": title_gate_rejected,
+        "post_enrichment_rejected": post_enrichment_rejected,
+        "freshness_filtered": freshness_filtered,
+        "eligible_after_filters": len(candidates),
+        "ai_screened": screened,
+        "deep_ai_evaluated": deep_evaluated,
+    }
+    _write_last_run_report(last_run_report)
+
     return {
         "ai_backend": ai.backend_name(),
         "queries_this_cycle": len(queries),
@@ -441,6 +517,7 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
         "eligible_after_filters": len(candidates),
         "title_gate_rejected": title_gate_rejected,
         "post_enrichment_rejected": post_enrichment_rejected,
+        "freshness_filtered": freshness_filtered,
         "evaluated": evaluated,
         "ai_screened": screened,
         "deep_ai_evaluated": deep_evaluated,
@@ -449,7 +526,10 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
         "packages_needing_ai_or_review": len(not_ready),
         "errors": errors,
         "parse_failures": parse_failures,
+        "usage_this_run": usage_this_run,
+        "usage_by_operation_this_run": usage_ops_this_run,
         "usage_today": db.usage_stats(1),
+        "last_run_report": "output/last_run_report.json",
         "top": sorted([
             {
                 "title": j.title,

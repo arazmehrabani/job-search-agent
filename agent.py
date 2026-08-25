@@ -78,6 +78,9 @@ def doctor(cfg, network: bool = False):
     profile = Path(cfg.get("documents", {}).get("profile", "input/profile.json")); add("Profile", profile.exists(), profile)
     scope = Path(cfg.get("search", {}).get("career_scope_file", "input/career_scope.yaml")); add("Career scope", scope.exists(), scope)
     add("Relevance gate", bool(cfg.get("relevance", {}).get("enabled", True)), "title/domain gate + relevance-first ordering")
+    scfg = cfg.get("search", {}) or {}
+    add("Freshness policy", True, f"0-{scfg.get('full_eligibility_days',14)}d full; {int(scfg.get('full_eligibility_days',14))+1}-{scfg.get('active_grace_days',30)}d live grace; strong titles to {scfg.get('strong_title_max_days',45)}d")
+    add("Per-run AI telemetry", True, "output/last_run_report.json")
     evidence = load_evidence_registry(cfg); add("Evidence registry", len(evidence) >= 20, f"{len(evidence)} verified evidence objects")
     ecfg = cfg.get("evidence", {}) or {}
     add("Semantic evidence select", bool(ecfg.get("semantic_selection", {}).get("enabled", True)), "deep-match semantic second pass")
@@ -105,7 +108,7 @@ def doctor(cfg, network: bool = False):
             add("Internet connectivity", r.status_code < 500, f"HTTP {r.status_code}")
         except Exception as exc: add("Internet connectivity", False, exc)
 
-    print("\nJob Search Agent V1.8 — doctor\n")
+    print("\nJob Search Agent V1.8.1 — doctor\n")
     for name, ok, note in checks:
         print(f"{'OK ' if ok else '---'} {name:22} {note}")
     optional_names = {"OPENAI_API_KEY", "ADZUNA keys", "JOOBLE_API_KEY", "Git", "pdfinfo", "Codex CLI"}
@@ -114,7 +117,7 @@ def doctor(cfg, network: bool = False):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Personal Job Search Agent V1.8")
+    ap = argparse.ArgumentParser(description="Personal Job Search Agent V1.8.1")
     ap.add_argument("--config", default="config.yaml")
     sub = ap.add_subparsers(dest="command", required=True)
     r = sub.add_parser("run", help="Search, verify, rank and prepare application packages")
@@ -141,7 +144,7 @@ def main():
     if args.command == "doctor":
         doctor(cfg, network=args.network); return
     if args.command == "sources":
-        print("\nJob Search Agent V1.8 — source status\n")
+        print("\nJob Search Agent V1.8.1 — source status\n")
         broad = 0
         live_ok = 0
         for src in build_sources(cfg):

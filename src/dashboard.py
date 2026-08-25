@@ -7,24 +7,128 @@ from .utils import safe_http_url
 
 
 def _match_meta(raw: str | None) -> dict:
-    try: return json.loads(raw or "{}")
-    except Exception: return {}
+    try:
+        return json.loads(raw or "{}")
+    except Exception:
+        return {}
 
-def _esc(value) -> str: return html.escape(str(value or ""))
+
+def _esc(value) -> str:
+    return html.escape(str(value or ""))
+
 
 def _clip(value, max_chars: int) -> tuple[str, str]:
     raw = str(value or "").strip()
     shown = raw if len(raw) <= max_chars else raw[: max_chars - 1].rstrip() + "…"
     return _esc(shown), _esc(raw)
 
-def _pretty(value: str) -> str: return str(value or "").replace("_", " ").strip().title()
+
+def _pretty(value: str) -> str:
+    return str(value or "").replace("_", " ").strip().title()
+
 
 def _score_class(v: int) -> str:
     return "score-high" if v >= 82 else ("score-mid" if v >= 68 else "score-low")
 
+
+def _json_file(path: str) -> dict:
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
 def _discovery_meta(path: str = "output/discovery_report.json") -> dict:
-    try: return json.loads(Path(path).read_text(encoding="utf-8"))
-    except Exception: return {}
+    return _json_file(path)
+
+
+def _last_run_meta(path: str = "output/last_run_report.json") -> dict:
+    return _json_file(path)
+
+
+def _german_display(m: dict) -> tuple[str, str]:
+    req = str(m.get("german_requirement", "none") or "none").lower()
+    contextual = str(m.get("contextual_german_importance", "") or "").lower()
+    mandatory = str(m.get("contextual_german_mandatory", "") or "").lower()
+    contextual_reason = str(m.get("contextual_german_reason", "") or "").strip()
+
+    explicit = {
+        "none": "Not explicit",
+        "": "Not explicit",
+        "preferred": "Preferred",
+        "b1_or_basic": "B1/basic required",
+        "b2_or_good": "B2/good required",
+        "c1_plus_or_fluent": "C1+/fluent required",
+        "required_unspecified": "Required · level unclear",
+    }.get(req, _pretty(req))
+
+    if req in {"none", ""}:
+        if mandatory == "yes" or contextual == "mandatory":
+            shown = "Not explicit ⚠ likely mandatory"
+        elif contextual == "likely_important":
+            shown = "Not explicit ⚠ likely important"
+        elif contextual == "preferred":
+            shown = "Not explicit · likely preferred"
+        else:
+            shown = explicit
+    else:
+        shown = explicit
+
+    tooltip_bits = [f"Explicit: {explicit}"]
+    if contextual:
+        tooltip_bits.append(f"Context: {_pretty(contextual)}")
+    if contextual_reason:
+        tooltip_bits.append(contextual_reason)
+    return _esc(shown), _esc(" | ".join(tooltip_bits))
+
+
+def _analysis_details(m: dict, summary: str = "analysis") -> str:
+    tech = int(m.get("technical_fit", 0) or 0)
+    exp = int(m.get("experience_fit", 0) or 0)
+    language_fit = int(m.get("language_fit", 0) or 0)
+    edu = int(m.get("education_fit", 0) or 0)
+    reasoning = _esc(m.get("reasoning", ""))
+    risks = [_esc(x) for x in (m.get("risks", []) or [])]
+    strong = [_esc(x) for x in (m.get("strong_matches", []) or [])]
+    partial = [_esc(x) for x in (m.get("partial_matches", []) or [])]
+    missing = [_esc(x) for x in (m.get("missing_required", []) or [])]
+    ev_ids = [_esc(x) for x in (m.get("evidence_ids", []) or [])]
+    preasons = [_esc(x) for x in (m.get("priority_reasons", []) or [])]
+    decision_reasons = [_esc(x) for x in (m.get("decision_reasons", []) or [])]
+    agent_action = _esc(str(m.get("decision", "") or ""))
+    screen_decision = _esc(str(m.get("screen_decision", "") or ""))
+    screen_score = int(m.get("screen_score", 0) or 0)
+
+    parts = []
+    if any((tech, exp, language_fit, edu)):
+        parts.append(
+            f"<div class='fitgrid'><span>Technical <b>{tech}</b></span><span>Experience <b>{exp}</b></span>"
+            f"<span>Language <b>{language_fit}</b></span><span>Education <b>{edu}</b></span></div>"
+        )
+    if screen_score or screen_decision:
+        parts.append(f"<div><b>AI screen:</b> {screen_score or '—'} · {screen_decision or '—'}</div>")
+    german_text, german_tip = _german_display(m)
+    if str(m.get("german_requirement", "") or "") or str(m.get("contextual_german_importance", "") or ""):
+        parts.append(f"<div title='{german_tip}'><b>German:</b> {german_text}</div>")
+    if strong:
+        parts.append("<div><b>Strong:</b> " + ", ".join(strong[:7]) + "</div>")
+    if partial:
+        parts.append("<div><b>Partial:</b> " + ", ".join(partial[:5]) + "</div>")
+    if missing:
+        parts.append("<div><b>Missing required:</b> " + ", ".join(missing[:7]) + "</div>")
+    if risks:
+        parts.append("<div><b>Risks:</b> " + ", ".join(risks[:7]) + "</div>")
+    if agent_action:
+        parts.append("<div><b>Agent action:</b> " + agent_action + "</div>")
+    if preasons:
+        parts.append("<div><b>Priority:</b> " + ", ".join(preasons[:7]) + "</div>")
+    if decision_reasons:
+        parts.append("<div><b>Decision reasons:</b> " + ", ".join(decision_reasons[:7]) + "</div>")
+    if ev_ids:
+        parts.append("<div><b>Evidence:</b> " + ", ".join(ev_ids[:16]) + "</div>")
+    if reasoning:
+        parts.append("<div class='reason'>" + reasoning + "</div>")
+    return f"<details><summary>{_esc(summary)}</summary>{''.join(parts)}</details>" if parts else ""
 
 
 def _render_main_row(r) -> str:
@@ -34,8 +138,7 @@ def _render_main_row(r) -> str:
     company, company_full = _clip(r["company"], 46)
     loc, loc_full = _clip(r["location"], 33)
     source = _esc(r["source"] or ""); active = _esc(r["active_status"] or "")
-    date = _esc((r["published_at"] or "")[:10])
-    status = _esc(r["status"] or "")
+    date = _esc((r["published_at"] or "")[:10]); status = _esc(r["status"] or "")
     m = _match_meta(r["match_json"])
     fit = int(r["match_score"] or 0) if r["match_score"] is not None else None
     priority = int(r["priority_score"] or m.get("priority_score", 0) or 0) if r["match_score"] is not None else None
@@ -43,39 +146,19 @@ def _render_main_row(r) -> str:
     source_kind = "PRE" if match_source == "heuristic" else ("SCREEN" if match_source == "ai_screen" else ("AI" if match_source else ""))
     lang = _esc(str(m.get("job_language", ""))).upper()
     stage, schedule, contract = map(_pretty, (m.get("career_stage", ""), m.get("schedule", ""), m.get("contract", "")))
-    german_req = _pretty(m.get("german_requirement", ""))
+    german_req, german_tip = _german_display(m)
     family, family_full = _clip(m.get("career_family_label", ""), 46)
     tier = _pretty(m.get("career_tier", "")); src_cv = _esc(str(m.get("source_cv", "")))
     plabel = _esc(str(m.get("priority_label", "") or ""))
-
-    tech = int(m.get("technical_fit", 0) or 0); exp = int(m.get("experience_fit", 0) or 0)
-    language_fit = int(m.get("language_fit", 0) or 0); edu = int(m.get("education_fit", 0) or 0)
-    reasoning = _esc(m.get("reasoning", ""))
-    risks = [_esc(x) for x in (m.get("risks", []) or [])]
-    strong = [_esc(x) for x in (m.get("strong_matches", []) or [])]
-    missing = [_esc(x) for x in (m.get("missing_required", []) or [])]
-    ev_ids = [_esc(x) for x in (m.get("evidence_ids", []) or [])]
-    preasons = [_esc(x) for x in (m.get("priority_reasons", []) or [])]
-    agent_action = _esc(str(m.get("decision", "") or ""))
-
-    details_parts = []
-    if any((tech, exp, language_fit, edu)):
-        details_parts.append(f"<div class='fitgrid'><span>Technical <b>{tech}</b></span><span>Experience <b>{exp}</b></span><span>Language <b>{language_fit}</b></span><span>Education <b>{edu}</b></span></div>")
-    if strong: details_parts.append("<div><b>Strong:</b> " + ", ".join(strong[:5]) + "</div>")
-    if missing: details_parts.append("<div><b>Missing required:</b> " + ", ".join(missing[:5]) + "</div>")
-    if risks: details_parts.append("<div><b>Risks:</b> " + ", ".join(risks[:5]) + "</div>")
-    if agent_action: details_parts.append("<div><b>Agent action:</b> " + agent_action + "</div>")
-    if preasons: details_parts.append("<div><b>Priority:</b> " + ", ".join(preasons[:5]) + "</div>")
-    if ev_ids: details_parts.append("<div><b>Evidence:</b> " + ", ".join(ev_ids[:12]) + "</div>")
-    if reasoning: details_parts.append("<div class='reason'>" + reasoning + "</div>")
-    details = "<details><summary>analysis</summary>" + "".join(details_parts) + "</details>" if details_parts else ""
+    details = _analysis_details(m, "analysis")
 
     employment_bits = [x for x in (stage, schedule, contract) if x and x.lower() != "unknown"]
     employment_html = "<div class='chips'>" + "".join(f"<span>{_esc(x)}</span>" for x in employment_bits) + "</div>" if employment_bits else "—"
     decision = str(r["user_decision"] or "") if "user_decision" in r.keys() else ""
     reason = str(r["user_reason"] or "") if "user_reason" in r.keys() else ""
     decision_html = f"<div class='decision-current'>{_esc(decision or '—')}</div>"
-    if reason: decision_html += f"<div class='sub' title='{_esc(reason)}'>{_esc(reason[:35])}</div>"
+    if reason:
+        decision_html += f"<div class='sub' title='{_esc(reason)}'>{_esc(reason[:35])}</div>"
     decision_html += f"<div class='decision-buttons' data-fp='{fp}'><button data-d='APPLY'>Interested</button><button data-d='SAVE'>Save</button><button data-d='SKIP'>Skip</button><details class='outcome'><summary>outcome</summary><button data-d='APPLIED'>Applied</button><button data-d='INTERVIEW'>Interview</button><button data-d='REJECTED'>Rejected</button><button data-d='OFFER'>Offer</button><button data-d='CLEAR'>Clear</button></details></div>"
 
     fit_html = "—" if fit is None else f"<span class='scorebadge {_score_class(fit)}'>{fit}</span><small>{source_kind}</small>"
@@ -85,7 +168,7 @@ def _render_main_row(r) -> str:
         "<tr>" + f"<td class='scorecell'>{fit_html}</td><td class='scorecell'>{pri_html}</td>"
         + f"<td class='role'>{role_link}{details}</td>"
         + f"<td class='company' title='{company_full}'>{company}</td><td class='location' title='{loc_full}'>{loc}</td>"
-        + f"<td>{lang}</td><td>{employment_html}</td><td>{_esc(german_req)}</td>"
+        + f"<td>{lang}</td><td>{employment_html}</td><td title='{german_tip}'>{german_req}</td>"
         + f"<td class='career' title='{family_full}'>{family}<div class='sub'>{_esc(tier)}</div></td>"
         + f"<td>{decision_html}</td><td>{src_cv}</td><td>{date or '—'}</td><td>{source}</td><td>{active}</td><td>{status}</td></tr>"
     )
@@ -100,13 +183,17 @@ def _render_audit_row(r) -> str:
     filter_reason = str(r["filter_reason"] or "") if "filter_reason" in r.keys() else ""
     plabel = str(m.get("priority_label", "") or "")
     reason = filter_reason or ("Priority decision: " + plabel if plabel else "Not evaluated / not actionable")
-    role = f"<a href='{url}' rel='noopener noreferrer' title='{title_full}'>{title}</a>" if raw_url else f"<span title='{title_full}'>{title}</span>"
-    return f"<tr><td>{fit}</td><td>{pri}</td><td>{role}</td><td title='{company_full}'>{company}</td><td>{_esc(reason)}</td><td>{_esc(r['source'] or '')}</td></tr>"
+    details = _analysis_details(m, "why rejected") if m else ""
+    role_link = f"<a href='{url}' rel='noopener noreferrer' title='{title_full}'>{title}</a>" if raw_url else f"<span title='{title_full}'>{title}</span>"
+    return (
+        f"<tr><td>{fit}</td><td>{pri}</td><td>{role_link}{details}</td>"
+        f"<td title='{company_full}'>{company}</td><td>{_esc(reason)}</td><td>{_esc(r['source'] or '')}</td></tr>"
+    )
 
 
 def build_dashboard(db: Database, output="output/dashboard.html", feedback_token: str = "", cfg: dict | None = None):
     rows = db.top_jobs(600)
-    stats = db.stats(); usage = db.usage_stats(1); discovery = _discovery_meta()
+    stats = db.stats(); usage = db.usage_stats(1); discovery = _discovery_meta(); last_run = _last_run_meta()
     dcfg = (cfg or {}).get("dashboard", {}) if cfg else {}
     main_min = int(dcfg.get("main_min_priority", 55) or 55)
 
@@ -118,7 +205,7 @@ def build_dashboard(db: Database, output="output/dashboard.html", feedback_token
         plabel = str(m.get("priority_label", "") or "")
         filtered = str(r["status"] or "") == "filtered"
         user_decision = str(r["user_decision"] or "") if "user_decision" in r.keys() else ""
-        actionable = (not filtered and priority is not None and int(priority or 0) >= main_min and plabel != "REJECT") or user_decision in {"APPLY","SAVE","APPLIED","INTERVIEW","OFFER"}
+        actionable = (not filtered and priority is not None and int(priority or 0) >= main_min and plabel != "REJECT") or user_decision in {"APPLY", "SAVE", "APPLIED", "INTERVIEW", "OFFER"}
         if actionable:
             main_rows.append(r)
             if plabel == "HIGH": high += 1
@@ -132,8 +219,13 @@ def build_dashboard(db: Database, output="output/dashboard.html", feedback_token
     broad_names = [x.get("name") for x in source_rows if x.get("category") == "broad" and x.get("success")]
     discovery_text = "ACTIVE" if auto_active else "OFF"
     discovery_note = ", ".join(str(x) for x in broad_names) if broad_names else str(discovery.get("warning") or "no successful broad source yet")
-    token_total = int(usage.get("input_tokens", 0) or 0) + int(usage.get("output_tokens", 0) or 0)
+
+    token_today = int(usage.get("input_tokens", 0) or 0) + int(usage.get("output_tokens", 0) or 0)
+    run_usage = last_run.get("usage_this_run", {}) or {}
+    token_run = int(run_usage.get("input_tokens", 0) or 0) + int(run_usage.get("output_tokens", 0) or 0)
     cost = float(usage.get("estimated_cost_usd", 0) or 0); cost_text = f"${cost:.2f}" if cost > 0 else "—"
+    ops = last_run.get("usage_by_operation_this_run", []) or []
+    ops_note = ", ".join(f"{x.get('operation')}: {x.get('calls', 0)}" for x in ops) or "no AI calls in last run"
 
     main_html = "".join(_render_main_row(r) for r in main_rows)
     audit_limit = int(dcfg.get("audit_limit", 250) or 250)
@@ -149,28 +241,32 @@ def build_dashboard(db: Database, output="output/dashboard.html", feedback_token
 .tablewrap{{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:auto;box-shadow:0 1px 3px rgba(0,0,0,.04)}}
 table{{border-collapse:collapse;width:100%;font-size:12.3px;table-layout:fixed;min-width:1480px}} th,td{{padding:9px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;overflow-wrap:anywhere}}
 th{{position:sticky;top:0;background:#fafbfc;z-index:2;color:#555e68;font-size:10.5px;text-transform:uppercase;letter-spacing:.03em}}
-th:nth-child(1),th:nth-child(2){{width:68px}} th:nth-child(3){{width:300px}} th:nth-child(4){{width:190px}} th:nth-child(5){{width:125px}} th:nth-child(6){{width:55px}} th:nth-child(7){{width:190px}} th:nth-child(8){{width:125px}} th:nth-child(9){{width:210px}} th:nth-child(10){{width:155px}}
+th:nth-child(1),th:nth-child(2){{width:68px}} th:nth-child(3){{width:300px}} th:nth-child(4){{width:190px}} th:nth-child(5){{width:125px}} th:nth-child(6){{width:55px}} th:nth-child(7){{width:190px}} th:nth-child(8){{width:155px}} th:nth-child(9){{width:210px}} th:nth-child(10){{width:155px}}
 a{{color:var(--link);text-decoration:none;font-weight:650}} a:hover{{text-decoration:underline}} .sub{{color:var(--muted);font-size:10.5px;margin-top:3px}}
 .scorecell{{text-align:center}} .scorecell small{{display:block;color:var(--muted);font-size:8.5px;margin-top:3px;font-weight:750}} .scorebadge{{display:inline-flex;align-items:center;justify-content:center;min-width:38px;height:29px;border-radius:8px;font-size:13.5px;font-weight:800}}
 .score-high{{background:#e7f6ec;color:#196c38}} .score-mid{{background:#fff4d6;color:#8a5b00}} .score-low{{background:#f3f4f6;color:#68707a}}
 .chips{{display:flex;gap:3px;flex-wrap:wrap}} .chips span{{background:#f1f3f5;border-radius:5px;padding:3px 5px;font-size:10px}}
 details{{margin-top:6px;color:var(--muted);font-size:10.5px}} summary{{cursor:pointer;color:#536170}} .fitgrid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:3px 10px;margin:5px 0}} .reason{{margin-top:4px;line-height:1.35}}
 .decision-current{{font-weight:700;font-size:11px}} .decision-buttons{{display:flex;gap:3px;margin-top:5px;flex-wrap:wrap}} .decision-buttons button{{border:1px solid #d6dbe1;background:#fff;border-radius:5px;padding:3px 5px;font-size:9px;cursor:pointer}} .decision-buttons.disabled button{{opacity:.35;cursor:not-allowed}}
-.audit{{margin-top:14px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:9px 11px}} .audit table{{min-width:900px;table-layout:auto}} .audit th{{position:static}}
+.audit{{margin-top:14px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:9px 11px}} .audit table{{min-width:1100px;table-layout:auto}} .audit th{{position:static}}
 .empty{{padding:20px;color:var(--muted);text-align:center}} tr:hover td{{background:#fbfcfd}} @media(max-width:900px){{.shell{{padding:13px}}}}
-</style></head><body><div class='shell'><h1>Job Search Agent V1.8</h1>
+</style></head><body><div class='shell'><h1>Job Search Agent V1.8.1</h1>
 <p class='note'><b>Main list = jobs worth your attention.</b> Obvious wrong-domain jobs and Priority REJECT rows are hidden in the audit section below. PRE is a local domain-anchored pre-score; SCREEN/AI are Codex/API assessments.</p>
 <div class='cards'>
 <div class='card'><b>Auto discovery</b><div class='n'>{discovery_text}</div><div class='sub'>{_esc(discovery_note[:58])}</div></div>
 <div class='card'><b>Raw discovered</b><div class='n'>{discovery.get('raw_results',0) or 0}</div></div>
 <div class='card'><b>Title-gate rejects</b><div class='n'>{discovery.get('title_gate_rejected',0) or 0}</div></div>
+<div class='card'><b>Freshness filtered</b><div class='n'>{discovery.get('freshness_filtered',0) or 0}</div></div>
 <div class='card'><b>Eligible after relevance</b><div class='n'>{discovery.get('eligible_after_relevance_filters',0) or 0}</div></div>
 <div class='card'><b>High</b><div class='n'>{high}</div></div><div class='card'><b>Review</b><div class='n'>{review}</div></div><div class='card'><b>Possible</b><div class='n'>{possible}</div></div>
-<div class='card'><b>Ready packages</b><div class='n'>{stats.get('packages',0) or 0}</div></div><div class='card'><b>AI calls today</b><div class='n'>{usage.get('calls',0) or 0}</div></div><div class='card'><b>Approx tokens</b><div class='n'>{token_total:,}</div></div><div class='card'><b>API cost*</b><div class='n'>{cost_text}</div></div>
+<div class='card'><b>Ready packages</b><div class='n'>{stats.get('packages',0) or 0}</div></div>
+<div class='card'><b>AI calls this run</b><div class='n'>{run_usage.get('calls',0) or 0}</div><div class='sub' title='{_esc(ops_note)}'>{_esc(ops_note[:58])}</div></div>
+<div class='card'><b>Tokens this run</b><div class='n'>{token_run:,}</div></div>
+<div class='card'><b>AI calls today</b><div class='n'>{usage.get('calls',0) or 0}</div></div><div class='card'><b>Tokens today</b><div class='n'>{token_today:,}</div></div><div class='card'><b>API cost*</b><div class='n'>{cost_text}</div></div>
 </div>
 <details style='margin:0 0 12px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px 11px'><summary><b>Discovery source health</b></summary><div style='margin-top:7px'>{''.join(f"<div><b>{_esc(x.get('name'))}</b> — {_esc(x.get('category'))} — {'OK' if x.get('success') else ('READY' if x.get('operational') else 'OFF')} — {_esc(x.get('results',0))} result(s) — {_esc(x.get('error') or x.get('reason') or '')}</div>" for x in source_rows)}</div></details>
-<h2>Jobs worth your attention</h2><div class='tablewrap'><table><thead><tr><th>Fit</th><th>Priority</th><th>Role</th><th>Company</th><th>Location</th><th>Lang</th><th>Employment</th><th>German req.</th><th>Career family</th><th>Your decision</th><th>Source CV</th><th>Date</th><th>Source</th><th>Live</th><th>Status</th></tr></thead><tbody>{main_html if main_html else "<tr><td colspan='15' class='empty'>No actionable jobs yet.</td></tr>"}</tbody></table></div>
-<details class='audit'><summary><b>Rejected / filtered audit ({len(audit_rows)})</b> — hidden by default</summary><p class='note'>These rows stay in the database for transparency, but they do not consume your normal review attention. Hard-title rejects are designed to consume neither detail-page nor Codex budget.</p><div class='tablewrap'><table><thead><tr><th>Fit</th><th>Priority</th><th>Role</th><th>Company</th><th>Reason</th><th>Source</th></tr></thead><tbody>{audit_html}</tbody></table></div></details>
+<h2>Jobs worth your attention</h2><div class='tablewrap'><table><thead><tr><th>Fit</th><th>Priority</th><th>Role</th><th>Company</th><th>Location</th><th>Lang</th><th>Employment</th><th>German</th><th>Career family</th><th>Your decision</th><th>Source CV</th><th>Date</th><th>Source</th><th>Live</th><th>Status</th></tr></thead><tbody>{main_html if main_html else "<tr><td colspan='15' class='empty'>No actionable jobs yet.</td></tr>"}</tbody></table></div>
+<details class='audit'><summary><b>Rejected / filtered audit ({len(audit_rows)})</b> — hidden by default</summary><p class='note'>These rows stay in the database for transparency, but they do not consume your normal review attention. AI-evaluated rejects keep their full reasoning under <b>why rejected</b>.</p><div class='tablewrap'><table><thead><tr><th>Fit</th><th>Priority</th><th>Role / explanation</th><th>Company</th><th>Reason</th><th>Source</th></tr></thead><tbody>{audit_html}</tbody></table></div></details>
 <p class='note' style='margin-top:10px'>*API cost appears only when explicit token prices are configured.</p>
 </div><script>
 const feedbackToken="__FEEDBACK_TOKEN__";

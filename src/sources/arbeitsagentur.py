@@ -35,7 +35,7 @@ class ArbeitsagenturSource(JobSource):
         self.cfg = cfg or {}
         self.timeout = int(self.cfg.get("timeout_seconds", 25) or 25)
         self.max_queries = max(1, int(self.cfg.get("max_queries_per_run", 12) or 12))
-        self.user_agent = str(self.cfg.get("user_agent") or "JobSearchAgent/1.8")
+        self.user_agent = str(self.cfg.get("user_agent") or "JobSearchAgent/1.8.1")
         self.min_delay = float(self.cfg.get("min_delay_seconds", 1.5) or 0.0)
         self.jitter = float(self.cfg.get("delay_jitter_seconds", 0.25) or 0.0)
         self.respect_robots = bool(self.cfg.get("respect_robots_txt", True))
@@ -89,6 +89,20 @@ class ArbeitsagenturSource(JobSource):
             return now - timedelta(days=31)
         return None
 
+
+    @staticmethod
+    def _clean_result_title(raw_title: str, company: str = "") -> str:
+        """Remove BA result rank and duplicated trailing employer from the title."""
+        title = re.sub(r"^\s*\d+\s*[:.]\s*", "", str(raw_title or ""), flags=re.I)
+        title = re.sub(r"^\s*Ergebnis\s*:\s*", "", title, flags=re.I).strip()
+        company = re.sub(r"\s+", " ", str(company or "")).strip()
+        if company:
+            # BA link labels often look like: `4: Mechanical Engineer ... bei Company GmbH`.
+            # Employer is already a structured field, so keep it out of the canonical title.
+            cpat = re.escape(company).replace(r"\ ", r"\s+")
+            title = re.sub(rf"\s+bei\s+{cpat}\s*$", "", title, flags=re.I).strip()
+        return re.sub(r"\s+", " ", title).strip()
+
     @staticmethod
     def _field(text: str, label: str, stop_labels: tuple[str, ...]) -> str:
         pattern = re.escape(label) + r"\s*:\s*(.+?)"
@@ -109,7 +123,7 @@ class ArbeitsagenturSource(JobSource):
             if url in seen:
                 continue
             seen.add(url)
-            title = re.sub(r"^\s*\d+\.\s*Ergebnis:\s*", "", a.get_text(" ", strip=True), flags=re.I).strip()
+            raw_title = a.get_text(" ", strip=True)
             # Find the smallest nearby container that contains employer/location metadata.
             node = a
             block_text = ""
@@ -123,6 +137,7 @@ class ArbeitsagenturSource(JobSource):
                     break
             company = self._field(block_text, "Arbeitgeber", ("Arbeitsort", "Anstellungsart", "Befristung", "Veröffentlichungsdatum", "Änderungsdatum"))
             location = self._field(block_text, "Arbeitsort", ("Anstellungsart", "Befristung", "Veröffentlichungsdatum", "Änderungsdatum"))
+            title = self._clean_result_title(raw_title, company)
             ref = url.rstrip("/").split("/")[-1]
             out.append(Job(
                 source=self.name,

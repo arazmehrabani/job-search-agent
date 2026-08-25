@@ -70,7 +70,7 @@ class ArbeitnowSource(JobSource):
                 return True
             specific = [t for t in toks if t not in generic]
             # V1.7 treated the word "engineer" as enough to match "mechanical engineer"
-            # against every software/data engineer in the catalogue. V1.8 requires the
+            # against every software/data engineer in the catalogue. V1.8.1 requires the
             # domain-bearing part of the query to match as well.
             if specific:
                 title_hits = sum(1 for t in specific if t in title)
@@ -92,7 +92,7 @@ class ArbeitnowSource(JobSource):
         url = "https://www.arbeitnow.com/api/job-board-api"
         for page in range(1, self.pages + 1):
             r = requests.get(url, params={"page": page}, timeout=self.timeout,
-                             headers={"User-Agent": "JobSearchAgent/1.8"})
+                             headers={"User-Agent": "JobSearchAgent/1.8.1"})
             r.raise_for_status()
             data = r.json()
             batch = data.get("data", []) if isinstance(data, dict) else []

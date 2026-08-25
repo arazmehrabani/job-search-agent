@@ -1,39 +1,55 @@
-# Job Search Agent V1.8 — Validation Report
+# Job Search Agent V1.8.1 — Validation Report
 
-## Automated tests
+## Automated test suite
 
-`python -m unittest discover -s tests -q`
+Command:
 
-Result: **56 / 56 tests passed**.
+```text
+python -m unittest discover -s tests -v
+```
 
-The suite includes all prior parser, deduplication, German-language, CV selection, feedback, telemetry, HTTP/robots/cache, semantic evidence audit, discovery-source and Windows/Codex Unicode regressions plus V1.8 relevance tests.
+Result: **65 / 65 tests passed**.
 
-## V1.8 regressions added
+The suite includes all prior parser, deduplication, employment/language, CV selection, feedback learning, telemetry, HTTP throttling/robots/cache, semantic evidence audit, source discovery, Windows/Codex UTF-8, and V1.8 relevance-gate regressions.
 
-Validated that:
+### V1.8.1 regressions added
 
-- `Software Engineer, Backend Focused` is rejected as `PURE_SOFTWARE_BACKEND` and receives PRE 0.
-- `mechanical engineer` catalogue search no longer matches a backend role merely because both titles contain `engineer`.
-- `Software Engineer - Simulation` remains eligible because a real simulation bridge exists.
-- `Control Software Engineer - Wind Turbines` remains eligible because control/wind bridges exist.
-- `Finance & Accounting Manager Renewable Energy` is still rejected; an industry keyword cannot rescue a wrong profession.
-- `Mechanical Engineer` without explicit full-time metadata is not accidentally filtered as an unsupported `professional` employment state.
-- Structural Analysis Engineer scores far above a backend software role.
-- Generic `Systems Engineer` requires real mechanical/simulation/validation evidence in the description.
-- Dashboard keeps hard rejects auditable but outside the normal attention list.
+- 8-14 day vacancies remain fully eligible.
+- 15-30 day vacancies survive the cheap filter for live-page confirmation.
+- 31-45 day automatic vacancies require a strong target title.
+- `DE` and city-only German locations do not receive a false location penalty.
+- Explicit foreign-country locations still receive the light location penalty.
+- BA titles remove search-result ranks and duplicated `bei <company>` suffixes.
+- Software/frontend product-design titles are rejected locally.
+- Dashboard shows contextual German importance clearly.
+- AI-rejected audit rows retain detailed reasoning.
+- Per-run AI call/token telemetry is rendered from `last_run_report.json`.
 
-## Static validation
+## Python compilation
 
-- `python -m compileall` passes for the source tree, `agent.py`, and `vscode_runner.py`.
-- All five sanitized LaTeX CV bases compile successfully and remain 2 pages each.
-- Existing V1.6 semantic evidence/claim-audit code and V1.7.1 UTF-8 Codex subprocess handling are unchanged except for analysis-version refresh to `1.8`.
+```text
+python -m compileall -q .
+```
 
-## Recommended real-world validation
+Result: **passed**.
 
-Run V1.8 from a fresh folder/database and compare the first discovery cycle with the V1.7 PDF. Expected behavior:
+## Base CV compilation
 
-1. raw discovery can remain broad;
-2. a large fraction of obvious software/business titles should be counted in `title_gate_rejected`;
-3. the main dashboard should be much shorter;
-4. mechanical/CAE/wind/simulation jobs should appear before ambiguous adjacent roles;
-5. hard-rejected titles should not consume Codex calls.
+All sanitized master CV templates compile successfully with pdfLaTeX:
+
+- `mechanical_de_master.tex` → 2 pages
+- `mechanical_en_master.tex` → 2 pages
+- `wind_de_master.tex` → 2 pages
+- `wind_en_master.tex` → 2 pages
+- `wind_thesis_en_master.tex` → 2 pages
+
+## Recommended first validation run
+
+Use `run_once(dry_run=True)` and review:
+
+- `output/dashboard.html`
+- `output/discovery_report.json`
+- `output/search_plan.json`
+- `output/last_run_report.json`
+
+The most important expected change from V1.8 is that relevant 8-30 day jobs are no longer thrown away solely because they are older than seven days, while obvious unrelated roles still die before detail-page/Codex work.

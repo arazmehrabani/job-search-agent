@@ -1,6 +1,7 @@
 from __future__ import annotations
+import re
 from .models import Job, MatchResult
-from .filters import age_days
+from .filters import age_days, freshness_limits
 
 
 def heuristic_language_fit(german_requirement: str, job_language: str = "en") -> int:
@@ -15,6 +16,60 @@ def heuristic_language_fit(german_requirement: str, job_language: str = "en") ->
     }.get(german_requirement, 65)
 
 
+def _location_is_preferred(job: Job, cfg: dict) -> bool:
+    """Conservative location normalization for Germany-focused searches.
+
+    BA commonly returns `City, State, DE`, while some sources return only a city.
+    V1.8 incorrectly penalized these because it searched only for the literal words
+    `Germany`/`Deutschland`. V1.8.1 treats DE/Germany/Deutschland as equivalent and,
+    for a Germany-targeted search, does not penalize city-only locations unless they
+    explicitly name a different country.
+    """
+    loc = str(job.location or "").strip().lower()
+    if not loc:
+        return True
+    preferred_locations = [str(x).strip().lower() for x in cfg.get("preferences", {}).get("preferred_locations", []) if str(x).strip()]
+    if any(x in loc for x in preferred_locations):
+        return True
+    if "remote" in loc:
+        return True
+
+    target_country = str(cfg.get("search", {}).get("country", "de") or "de").strip().lower()
+    if target_country in {"de", "deu", "germany", "deutschland"}:
+        if "germany" in loc or "deutschland" in loc or re.search(r"(?:^|[,\s])de(?:$|[,\s])", loc):
+            return True
+        # If an explicit foreign country is present, this is genuinely outside the target.
+        foreign_markers = (
+            "france", "frankreich", "netherlands", "niederlande", "belgium", "belgien", "austria", "österreich",
+            "switzerland", "schweiz", "poland", "polen", "czech", "tschechien", "denmark", "dänemark",
+            "sweden", "schweden", "norway", "norwegen", "spain", "spanien", "italy", "italien", "portugal",
+            "united kingdom", "uk", "ireland", "usa", "united states", "canada", "new zealand", "australia",
+        )
+        if any(re.search(rf"(?:^|[,\s]){re.escape(x)}(?:$|[,\s])", loc) for x in foreign_markers):
+            return False
+        # Germany-wide discovery often supplies only a German city/state. Avoid a false
+        # penalty when no contrary country signal exists.
+        return True
+
+    return False if preferred_locations else True
+
+
+def _freshness_penalty(job: Job, cfg: dict) -> tuple[int, str]:
+    a = age_days(job)
+    if a is None:
+        return 0, ""
+    lim = freshness_limits(cfg)
+    if a <= lim["full"]:
+        return 0, ""
+    if a <= min(21, lim["grace"]):
+        return 2, f"Vacancy is {int(a)} days old but still within active grace period"
+    if a <= lim["grace"]:
+        return 5, f"Vacancy is {int(a)} days old but still active"
+    if a <= lim["strong"]:
+        return 8, f"Older strong-title vacancy ({int(a)} days); live status was required"
+    return 12, f"Old vacancy ({int(a)} days)"
+
+
 def _practicality(job: Job, match: MatchResult, cfg: dict) -> tuple[int, list[str]]:
     score, reasons = 100, []
     if match.german_requirement == "c1_plus_or_fluent" and match.language_fit < 70:
@@ -26,9 +81,6 @@ def _practicality(job: Job, match: MatchResult, cfg: dict) -> tuple[int, list[st
     elif match.german_requirement == "preferred" and match.language_fit < 70:
         score -= 2; reasons.append("German is preferred, not mandatory")
 
-    # Deep AI may identify contextual language importance even when no explicit regex
-    # phrase exists. Treat this only as a soft practical risk; explicit detection above
-    # remains the authoritative statement of advertised requirements.
     contextual = str(getattr(match, "contextual_german_importance", "") or "").lower()
     mandatory = str(getattr(match, "contextual_german_mandatory", "") or "").lower()
     if match.german_requirement in {"none", "preferred", ""} and match.language_fit < 70:
@@ -51,18 +103,13 @@ def _practicality(job: Job, match: MatchResult, cfg: dict) -> tuple[int, list[st
     elif match.employment_type == "internship":
         score -= 2
 
-    a = age_days(job)
-    max_age = int(cfg.get("search", {}).get("max_age_days", 7) or 7)
-    if job.source == "manual" and a is not None and a > max_age:
-        score -= min(6, max(2, int(a // 14)))
-        reasons.append("Older manually supplied vacancy")
+    age_penalty, age_reason = _freshness_penalty(job, cfg)
+    if age_penalty:
+        score -= age_penalty
+        reasons.append(age_reason)
 
-    loc = (job.location or "").lower()
-    preferred_locations = [str(x).lower() for x in cfg.get("preferences", {}).get("preferred_locations", [])]
-    if loc and preferred_locations and not any(x in loc for x in ("germany", "deutschland", "remote")):
-        # Only a light penalty: the location parser may return a city without the country.
-        if not any(x in loc for x in preferred_locations):
-            score -= 5; reasons.append("Location may be outside preferred area")
+    if not _location_is_preferred(job, cfg):
+        score -= 5; reasons.append("Location may be outside preferred area")
     if match.recommendation.upper() == "SKIP":
         score -= 10; reasons.append("AI fit evaluator recommended SKIP")
     return max(0, min(100, score)), reasons
@@ -80,8 +127,6 @@ def calculate_priority(
         match.language_fit = heuristic_language_fit(match.german_requirement, match.job_language)
     practicality, reasons = _practicality(job, match, cfg)
 
-    # FIT dominates; practical constraints and language modify attention priority rather
-    # than rewriting the evidence-fit score itself.
     priority = round(fit * 0.78 + match.language_fit * 0.07 + practicality * 0.15)
     adj = float(feedback_adjustment or 0.0)
     if adj:
@@ -131,6 +176,7 @@ def compute_priority(job: Job, match: MatchResult, cfg: dict, db=None) -> MatchR
     match.decision_reasons = merged
     match.decision = "APPLY" if label == "HIGH" else ("REVIEW" if label == "REVIEW" else ("SAVE_OR_SKIP" if label == "LOW" else "REJECT"))
     return match
+
 
 # Backward-compatible public helper used by tests and external scripts.
 def feedback_adjustment(db, career_family: str, minimum_samples: int = 5, maximum_adjustment: int = 8) -> tuple[int, str]:

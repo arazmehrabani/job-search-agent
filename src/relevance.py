@@ -76,6 +76,10 @@ NEGATIVE_TITLE_GROUPS = {
         "graphic design", "ux/ui", "ux designer", "ui designer", "creative director", "social media", "content creation",
         "branding", "communication and engagement",
     ),
+    "SOFTWARE_PRODUCT_DESIGN": (
+        "frontend technologies", "software product design", "digital product design", "web product design",
+        "website product design", "sitebuilder", "marketplace technologies",
+    ),
 }
 
 # Some generic engineering titles are worth reading, but they do not earn relevance by
