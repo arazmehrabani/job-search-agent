@@ -22,10 +22,12 @@ from .career import (
     load_career_scope,
     detect_job_language,
     detect_employment_type,
+    detect_employment_profile,
     classify_career_family,
     detect_german_requirement,
 )
 from .cv_sources import select_cv_source, combined_cv_text
+from .utils import canonical_url, source_identity
 
 
 def load_profile(path: str) -> dict:
@@ -95,12 +97,9 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
     seen = set()
     unique = []
     for job in found:
-        key = (
-            job.company.lower().strip(),
-            job.title.lower().strip(),
-            job.location.lower().strip(),
-            job.url.split("?")[0],
-        )
+        # URL-first deduplication prevents tracking parameters and repeated alert links
+        # from creating multiple records before page enrichment.
+        key = canonical_url(job.url) or source_identity(job)
         if key in seen:
             continue
         seen.add(key)
@@ -110,16 +109,24 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
     strong = []
     packages = []
     not_ready = []
+    parse_failures = []
 
     for job in unique:
         if verify:
             active, job = check_and_enrich(job)
         else:
             active = "unknown"
+        # Do not pollute the database with generic parser failures. A manual URL
+        # remains in input/manual_jobs.txt and will be retried next cycle.
+        bad_title = not job.title or job.title.strip().lower() in {"job", "unknown job", "careers", "job details"}
+        bad_company = not job.company or job.company.strip().lower() in {"unknown company", "jobs", "careers"}
+        if bad_title and bad_company:
+            parse_failures.append({"url": job.url, "active": active, "reason": "Could not extract job title/company"})
+            continue
         if not job.title:
-            job.title = "Unknown job"
+            job.title = "Job (title not parsed)"
         if not job.company:
-            job.company = "Unknown company"
+            job.company = "Company not parsed"
 
         fp = db.upsert_job(job)
         db.set_active(fp, active)
@@ -131,7 +138,8 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
             continue
 
         lang = detect_job_language(job)
-        emp = detect_employment_type(job)
+        employment = detect_employment_profile(job)
+        emp = employment["primary"]
         german_req = detect_german_requirement(job)
         family_key, family_label, tier, family_signal = classify_career_family(job, scope)
         source_cv = select_cv_source(
@@ -140,6 +148,9 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
         context = {
             "job_language": lang,
             "employment_type": emp,
+            "career_stage": employment["career_stage"],
+            "schedule": employment["schedule"],
+            "contract": employment["contract"],
             "german_requirement": german_req,
             "career_family": family_key,
             "career_family_label": family_label,
@@ -162,6 +173,9 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
             # Keep classifications current even when reusing a cached score.
             match.job_language = lang
             match.employment_type = emp
+            match.career_stage = employment["career_stage"]
+            match.schedule = employment["schedule"]
+            match.contract = employment["contract"]
             match.career_family = family_key
             match.career_family_label = family_label
             match.career_tier = tier
@@ -206,6 +220,7 @@ def run_pipeline(cfg: dict, db: Database, dry_run: bool = False):
         "ready_packages": len(packages),
         "packages_needing_ai_or_review": len(not_ready),
         "errors": errors,
+        "parse_failures": parse_failures,
         "top": sorted(
             [
                 {

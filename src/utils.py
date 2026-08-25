@@ -1,6 +1,7 @@
 
 from __future__ import annotations
 import hashlib, html, json, re
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 from datetime import datetime, timezone
 from pathlib import Path
 from bs4 import BeautifulSoup
@@ -76,3 +77,49 @@ def env_expand(value: str) -> str:
     def repl(m):
         return os.getenv(m.group(1), m.group(2) or "")
     return pattern.sub(repl, value)
+
+
+TRACKING_QUERY_KEYS = {
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+    "src", "source", "ref", "referrer", "trackingid", "tracking_id", "gh_src",
+    "lever-source", "fbclid", "gclid", "msclkid",
+}
+
+def canonical_url(url: str) -> str:
+    """Return a stable vacancy URL without fragments and common tracking parameters."""
+    if not url:
+        return ""
+    try:
+        parts = urlsplit(url.strip())
+        query = []
+        for k, v in parse_qsl(parts.query, keep_blank_values=True):
+            if k.lower() not in TRACKING_QUERY_KEYS:
+                query.append((k, v))
+        path = re.sub(r"/{2,}", "/", parts.path or "/")
+        # Ashby /application and overview routes identify the same vacancy.
+        if parts.netloc.lower().endswith("ashbyhq.com"):
+            path = re.sub(r"/application/?$", "", path)
+        return urlunsplit((parts.scheme.lower() or "https", parts.netloc.lower(), path.rstrip("/") or "/", urlencode(query), ""))
+    except Exception:
+        return (url or "").split("#", 1)[0].split("?", 1)[0].rstrip("/")
+
+def source_identity(job) -> str:
+    """Use semantic identity when parsed fields are trustworthy; otherwise URL/ID."""
+    company = normalize_text(str(getattr(job, "company", "") or ""))
+    title = normalize_text(str(getattr(job, "title", "") or ""))
+    location = normalize_text(str(getattr(job, "location", "") or ""))
+    generic_titles = {"", "job", "unknown job", "job title not parsed"}
+    generic_companies = {"", "unknown company", "company not parsed", "jobs", "careers"}
+    if title not in generic_titles and company not in generic_companies:
+        return f"semantic:{company}|{title}|{location}"
+
+    source_id = str(getattr(job, "source_id", "") or "").strip()
+    url = canonical_url(str(getattr(job, "url", "") or ""))
+    if source_id and str(getattr(job, "source", "")) not in {"manual", "email_alert"}:
+        return f"source:{normalize_text(str(getattr(job, 'source', '')))}:{normalize_text(source_id)}"
+    if url:
+        return f"url:{url}"
+    return f"fallback:{company}|{title}|{location}"
+
+def job_fingerprint(job) -> str:
+    return hashlib.sha256(source_identity(job).encode("utf-8")).hexdigest()[:24]

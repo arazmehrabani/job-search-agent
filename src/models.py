@@ -48,6 +48,13 @@ class MatchResult:
     transferability: str = ""
     source_cv: str = ""
     german_requirement: str = "none"
+    career_stage: str = "professional"
+    schedule: str = "unknown"
+    contract: str = "unknown"
+    technical_fit: int = 0
+    experience_fit: int = 0
+    language_fit: int = 0
+    education_fit: int = 0
 
     def to_dict(self) -> dict:
         return asdict(self)

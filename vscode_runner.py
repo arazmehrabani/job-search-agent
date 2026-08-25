@@ -1,5 +1,5 @@
 # %% [markdown]
-# JOB SEARCH AGENT V1.3 — VS CODE / CONDA RUNNER
+# JOB SEARCH AGENT V1.4 — VS CODE / CONDA RUNNER
 #
 # 1) In VS Code select your Conda interpreter named: agent
 # 2) Open this file.
@@ -37,7 +37,7 @@ def run_once(dry_run: bool = False):
     backend = AIEngine(cfg).backend_name()
     db = Database(os.getenv("JOB_AGENT_DB", "output/job_agent.sqlite3"))
     try:
-        print(f"\n=== Job Agent V1.3 | AI backend: {backend} | dry_run={dry_run} ===")
+        print(f"\n=== Job Agent V1.4 | AI backend: {backend} | dry_run={dry_run} ===")
         result = run_pipeline(cfg, db, dry_run=dry_run)
         dashboard = build_dashboard(db)
         print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -109,7 +109,7 @@ result = run_once(dry_run=True)
 
 # %% RUN ONCE — Shift+Enter
 # Uncomment and press Shift+Enter.
-#result = run_once(dry_run=False)
+# result = run_once(dry_run=False)
 
 
 # %% WATCH CONTINUOUSLY — Shift+Enter

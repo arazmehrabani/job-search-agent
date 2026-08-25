@@ -100,6 +100,9 @@ class AIEngine:
             career_tier=str(context.get("career_tier", "adjacent")),
             source_cv=str(context.get("source_cv", "")),
             german_requirement=str(context.get("german_requirement", "none")),
+            career_stage=str(context.get("career_stage", "professional")),
+            schedule=str(context.get("schedule", "unknown")),
+            contract=str(context.get("contract", "unknown")),
         )
         if not self.enabled or base < pre:
             return MatchResult(
@@ -116,6 +119,10 @@ class AIEngine:
             "recommendation": "APPLY|REVIEW|SKIP",
             "required_match": "integer 0-100",
             "nice_to_have_match": "integer 0-100",
+            "technical_fit": "integer 0-100",
+            "experience_fit": "integer 0-100",
+            "language_fit": "integer 0-100",
+            "education_fit": "integer 0-100",
             "strong_matches": ["string"],
             "partial_matches": ["string"],
             "missing_required": ["string"],
@@ -164,6 +171,10 @@ Return JSON only, no markdown."""
             recommendation=str(data.get("recommendation", "REVIEW")).upper(),
             required_match=int(data.get("required_match", 0) or 0),
             nice_to_have_match=int(data.get("nice_to_have_match", 0) or 0),
+            technical_fit=int(data.get("technical_fit", data.get("required_match", 0)) or 0),
+            experience_fit=int(data.get("experience_fit", data.get("required_match", 0)) or 0),
+            language_fit=int(data.get("language_fit", 0) or 0),
+            education_fit=int(data.get("education_fit", 0) or 0),
             strong_matches=list(data.get("strong_matches", []) or []),
             partial_matches=list(data.get("partial_matches", []) or []),
             missing_required=list(data.get("missing_required", []) or []),

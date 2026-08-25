@@ -1,4 +1,4 @@
-JOB SEARCH AGENT V1.3 — CV EVIDENCE LIBRARY
+JOB SEARCH AGENT V1.4 — CV EVIDENCE LIBRARY
 
 This folder contains sanitized factual CV sources:
 
@@ -24,7 +24,7 @@ reference were intentionally replaced with safe placeholders such as:
 This matches the requested workflow: another program can insert the real
 personal fields immediately before an application is submitted.
 
-IMPORTANT V1.3 RULE
+IMPORTANT V1.4 RULE
 -------------------
 The selected CV is only the layout/base emphasis. It is NOT the only factual
 source. The AI is given an evidence bundle made from all configured CV sources

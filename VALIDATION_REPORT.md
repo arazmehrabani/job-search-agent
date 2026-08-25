@@ -1,4 +1,17 @@
-# V1.3 Validation Report
+# V1.4 Validation Report
+
+## Regression suite
+
+`python -m unittest discover -s tests -v` -> **19 tests passed**.
+
+V1.4 adds regression coverage for: international != internship; `fluent in German`; `German is advantageous`; Ashby tracking/application URL canonicalization; Ashby company/location/source-ID enrichment; SuccessFactors/TÜV company/location/employment/requisition extraction.
+
+## Important limitation
+
+Live ATS markup can change. V1.4 uses structured data and platform-aware fallbacks, but any page that blocks automated HTTP access is reported as an enrichment/parse failure rather than silently inventing company, location or employment type.
+
+---
+
 
 Validated on 2026-08-13.
 
@@ -44,7 +57,7 @@ All five source templates compile successfully without a photo file because the 
 
 ## Privacy check
 
-The working CV folder was checked for the real contact/account identifiers from the uploaded four files. They are not carried into the V1.3 templates. Project/account links are represented by placeholders as well.
+The working CV folder was checked for the real contact/account identifiers from the uploaded four files. They are not carried into the V1.4 templates. Project/account links are represented by placeholders as well.
 
 ## Search-plan smoke test
 

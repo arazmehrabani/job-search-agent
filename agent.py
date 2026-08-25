@@ -45,13 +45,14 @@ def doctor(cfg):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Personal Job Search Agent V1.3")
+    ap = argparse.ArgumentParser(description="Personal Job Search Agent V1.4")
     ap.add_argument("--config", default="config.yaml")
     sub = ap.add_subparsers(dest="command", required=True)
     r = sub.add_parser("run", help="Search, verify, rank and prepare application packages")
     r.add_argument("--dry-run", action="store_true", help="Do not generate application documents")
     sub.add_parser("dashboard", help="Generate output/dashboard.html")
     sub.add_parser("doctor", help="Check configuration and dependencies")
+    sub.add_parser("repair-db", help="Remove V1.3 ghost parser rows without application packages")
     args = ap.parse_args()
     cfg = load_config(args.config)
     db = Database(db_path())
@@ -66,6 +67,11 @@ def main():
             print(p)
         elif args.command == "doctor":
             doctor(cfg)
+        elif args.command == "repair-db":
+            removed = db.repair_legacy_ghosts()
+            print(f"Removed {removed} legacy ghost row(s).")
+            p = build_dashboard(db)
+            print(f"Dashboard: {p}")
     finally:
         db.close()
 

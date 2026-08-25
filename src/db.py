@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .models import Job, MatchResult
-from .utils import fingerprint
+from .utils import fingerprint, job_fingerprint, canonical_url
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -50,19 +50,39 @@ class Database:
         self.conn.commit()
 
     def upsert_job(self, job: Job) -> str:
-        fp = fingerprint(job.company, job.title, job.location)
+        fp = job_fingerprint(job)
         now = datetime.now(timezone.utc).isoformat()
         existing = self.conn.execute("SELECT fingerprint FROM jobs WHERE fingerprint=?", (fp,)).fetchone()
+
+        # V1.3 migration: if the same canonical URL exists under the old semantic
+        # fingerprint, reuse/migrate that row instead of creating a duplicate.
+        if not existing and job.url:
+            target = canonical_url(job.url)
+            for row in self.conn.execute("SELECT fingerprint, url FROM jobs WHERE url IS NOT NULL AND url<>''").fetchall():
+                if canonical_url(row["url"]) == target:
+                    old_fp = row["fingerprint"]
+                    if old_fp != fp:
+                        try:
+                            self.conn.execute("UPDATE jobs SET fingerprint=? WHERE fingerprint=?", (fp, old_fp))
+                            self.conn.execute("UPDATE applications SET job_fingerprint=? WHERE job_fingerprint=?", (fp, old_fp))
+                            self.conn.commit()
+                        except sqlite3.IntegrityError:
+                            pass
+                    existing = self.conn.execute("SELECT fingerprint FROM jobs WHERE fingerprint=?", (fp,)).fetchone()
+                    if existing:
+                        break
+
         if existing:
             self.conn.execute(
                 """
-                UPDATE jobs SET source=?, source_id=?, url=?, apply_url=?, description=?,
+                UPDATE jobs SET source=?, source_id=?, title=?, company=?, location=?, url=?, apply_url=?, description=?,
                     published_at=COALESCE(?, published_at), salary_min=COALESCE(?, salary_min),
                     salary_max=COALESCE(?, salary_max), currency=?, last_seen=?
                 WHERE fingerprint=?
                 """,
                 (
-                    job.source, job.source_id, job.url, job.apply_url, job.description,
+                    job.source, job.source_id, job.title, job.company, job.location,
+                    canonical_url(job.url) or job.url, job.apply_url, job.description,
                     job.published_at.isoformat() if job.published_at else None,
                     job.salary_min, job.salary_max, job.currency, now, fp,
                 ),
@@ -77,13 +97,33 @@ class Database:
                 """,
                 (
                     fp, job.source, job.source_id, job.title, job.company, job.location,
-                    job.url, job.apply_url, job.description,
+                    canonical_url(job.url) or job.url, job.apply_url, job.description,
                     job.published_at.isoformat() if job.published_at else None,
                     job.salary_min, job.salary_max, job.currency, now, now,
                 ),
             )
         self.conn.commit()
         return fp
+
+    def repair_legacy_ghosts(self) -> int:
+        """Remove V1.3 parser-failure rows only when no application package exists."""
+        rows = self.conn.execute(
+            """SELECT fingerprint, title, company FROM jobs"""
+        ).fetchall()
+        removed = 0
+        for r in rows:
+            title = (r["title"] or "").strip().lower()
+            company = (r["company"] or "").strip().lower()
+            ghost = title in {"", "job", "unknown job", "job (title not parsed)"} and company in {"", "unknown company", "company not parsed"}
+            if not ghost:
+                continue
+            app = self.conn.execute("SELECT 1 FROM applications WHERE job_fingerprint=?", (r["fingerprint"],)).fetchone()
+            if app:
+                continue
+            self.conn.execute("DELETE FROM jobs WHERE fingerprint=?", (r["fingerprint"],))
+            removed += 1
+        self.conn.commit()
+        return removed
 
     def get_job_state(self, fp: str):
         row = self.conn.execute(

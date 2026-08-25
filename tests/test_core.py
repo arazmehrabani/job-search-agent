@@ -7,10 +7,13 @@ from src.models import Job
 from src.utils import fingerprint, safe_slug, latex_escape
 from src.filters import hard_filter, heuristic_score
 from src.db import Database
-from src.career import detect_job_language, detect_employment_type, detect_german_requirement, load_career_scope, classify_career_family
+from src.career import detect_job_language, detect_employment_type, detect_employment_profile, detect_german_requirement, load_career_scope, classify_career_family
 from src.cv_sources import select_cv_source, combined_cv_text, configured_cv_sources
 from src.documents import protect_identity_lines, restore_identity_lines
 from src.config import load_config
+from src.utils import canonical_url
+from src.pagecheck import check_and_enrich
+from unittest.mock import patch
 
 
 class CoreTests(unittest.TestCase):
@@ -130,6 +133,61 @@ class CoreTests(unittest.TestCase):
         restored, ok = restore_identity_lines(masked, protected)
         self.assertTrue(ok)
         self.assertEqual(restored, tex.rstrip("\n"))
+
+    def test_international_does_not_mean_internship(self):
+        job = Job("manual", "", "Wind Energy Engineer", "TÜV SÜD", "München", "https://x",
+                  description="Direct collaboration with customer specialists in national and international projects. Employment Type: Full time / regular")
+        profile = detect_employment_profile(job)
+        self.assertEqual(profile["career_stage"], "professional")
+        self.assertEqual(profile["schedule"], "full_time")
+
+    def test_fluent_in_german_detected(self):
+        job = Job("x", "1", "Wind Energy Engineer", "A", "München", "https://x",
+                  description="Fluent in German and English, both written and spoken, with strong negotiation skills.")
+        self.assertEqual(detect_german_requirement(job), "c1_plus_or_fluent")
+
+    def test_german_advantageous_is_preferred(self):
+        job = Job("x", "1", "Werkstudent Türme und Fundamente", "A", "München", "https://x",
+                  description="Very good English; German is advantageous.")
+        self.assertEqual(detect_german_requirement(job), "preferred")
+
+    def test_tracking_url_canonicalization(self):
+        a = canonical_url("https://jobs.ashbyhq.com/neura-robotics-gmbh/622b2195-a51c-4fef-949d-8156855cfd25/application?utm_source=x&src=LinkedIn")
+        b = canonical_url("https://jobs.ashbyhq.com/neura-robotics-gmbh/622b2195-a51c-4fef-949d-8156855cfd25")
+        self.assertEqual(a, b)
+
+    def test_successfactors_enrichment(self):
+        html = """<html><head><meta property='og:title' content='Wind Energy Engineer - Specialist in Load Simulation'></head>
+        <body><h1>Wind Energy Engineer - Specialist in Load Simulation</h1><main>
+        Tasks Review load assumptions according to international standards. Qualifications Fluent in German and English.
+        Work Area: Industrial Plants Country/Region: Germany Job Location: München Working Model: Hybrid Employment Type: Full time / regular Company: TÜV SÜD Industrie Service GmbH Org Unit Code: IS-ESW4-MUC Requisition ID: 6328
+        <a href='/apply'>Apply now</a></main></body></html>"""
+        class R:
+            status_code=200; text=html
+            url="https://jobs.tuvsud.com/job/Wind-Energy-Engineer/6328-en_US"
+        job = Job("manual", "", "", "", "", R.url)
+        with patch("src.pagecheck.requests.get", return_value=R()):
+            active, out = check_and_enrich(job)
+        self.assertEqual(active, "active")
+        self.assertEqual(out.company, "TÜV SÜD Industrie Service GmbH")
+        self.assertEqual(out.location, "München")
+        self.assertEqual(out.source_id, "6328")
+        self.assertIn("Full time", out.metadata.get("employment_type_raw", ""))
+
+    def test_ashby_enrichment(self):
+        html = """<html><body><h1>Working Student - Production Engineering (Human)</h1><main>
+        Location Munich Employment Type Part time Location Type On-site Department Production Engineering Overview Application
+        <a href='/apply'>Apply for this Job</a></main></body></html>"""
+        class R:
+            status_code=200; text=html
+            url="https://jobs.ashbyhq.com/neura-robotics-gmbh/622b2195-a51c-4fef-949d-8156855cfd25/application?src=LinkedIn"
+        job = Job("manual", "", "", "", "", R.url)
+        with patch("src.pagecheck.requests.get", return_value=R()):
+            active, out = check_and_enrich(job)
+        self.assertEqual(active, "active")
+        self.assertEqual(out.company, "NEURA Robotics GmbH")
+        self.assertEqual(out.location, "Munich")
+        self.assertEqual(out.source_id, "622b2195-a51c-4fef-949d-8156855cfd25")
 
 
 if __name__ == "__main__":

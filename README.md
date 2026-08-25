@@ -1,9 +1,33 @@
-# Job Search Agent V1.3 — Multi-CV Evidence Library + Bilingual Applications
+# Job Search Agent V1.4 — Robust Job Parsing + Multi-CV Bilingual Applications
 
-V1.3 is built for a broader career search than the literal titles in any one CV.
-It searches English and German vacancies in Germany, treats full-time work as a primary target, and can also search thesis, internship and working-student positions.
+V1.4 fixes the parsing and classification problems exposed by real Ashby and TÜV SÜD manual URLs while keeping the broad career-search and multi-CV evidence architecture from V1.3.
 
-## What changed in V1.3
+## Critical fixes in V1.4
+
+- **Platform-aware enrichment:** JSON-LD first, plus dedicated handling for Ashby and SAP SuccessFactors-style pages such as TÜV SÜD.
+- **Company/location extraction:** structured vacancy fields are preferred over generic browser metadata.
+- **Stable deduplication:** tracking parameters are removed; Ashby `/application` and vacancy overview URLs resolve to the same canonical job; database migration also recognizes a previously stored copy of the same URL.
+- **No ghost rows:** a manual page that cannot yield both a meaningful title and company is reported as a parse failure and is not inserted as `Unknown job / Unknown company`.
+- **Employment dimensions:** career stage, schedule and contract are tracked separately. A role can therefore be `working_student + part_time + fixed_term`.
+- **Internship bug fixed:** the word `intern` is matched on word boundaries, so `international projects` can no longer make a full-time engineering role look like an internship.
+- **German requirement fixes:** phrases such as `fluent in German` are recognized; `German is advantageous` is stored as `preferred`, not mandatory.
+- **Improved language detection:** German vacancy titles receive strong weight so an English-language ATS shell does not incorrectly relabel a German role as English.
+- **Richer dashboard:** separate employment dimensions plus technical/experience/language/education fit fields when the AI backend returns them.
+- **Legacy cleanup:** `python agent.py repair-db` removes V1.3 ghost parser rows that have no application package.
+
+### Migrating from V1.3
+
+The safest approach is to use the new V1.4 folder and copy only your `.env`, `input/manual_jobs.txt`, assets/photo, and any local configuration changes you intentionally made. If you instead reuse the old `output/job_agent.sqlite3`, run:
+
+```powershell
+python agent.py repair-db
+```
+
+Then run a new real or dry cycle so the three URLs are re-enriched with V1.4.
+
+---
+
+## What changed in V1.4
 
 The agent now has five factual CV sources:
 
@@ -120,7 +144,7 @@ German cover letter
 
 The agent must always state German ability truthfully as B1 / actively learning.
 
-If a role explicitly asks for B2/C1/fluent/native German, V1.3 records that as a **risk/gap** rather than automatically deleting the vacancy. This lets strong engineering matches remain visible while keeping the language mismatch honest.
+If a role explicitly asks for B2/C1/fluent/native German, V1.4 records that as a **risk/gap** rather than automatically deleting the vacancy. This lets strong engineering matches remain visible while keeping the language mismatch honest.
 
 The dashboard has a `German req.` column for this signal.
 
@@ -306,7 +330,7 @@ Run:
 python -m unittest discover -s tests -v
 ```
 
-V1.3 currently tests:
+V1.4 currently tests:
 
 - age filtering;
 - capability-based CAE matching;
